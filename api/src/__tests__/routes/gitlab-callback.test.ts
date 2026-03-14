@@ -2,9 +2,11 @@ import { describe, it, beforeAll, afterAll, afterEach } from 'vitest'
 import assert from 'node:assert/strict'
 import { MockAgent, setGlobalDispatcher, getGlobalDispatcher } from 'undici'
 import type { Dispatcher } from 'undici'
-import { buildTestApp } from '../helpers/build'
+import { buildTestApp, API_PREFIX } from '../helpers/build'
 import { makeMockPrisma } from '../helpers/prisma'
 import type { FastifyInstance } from 'fastify'
+
+const AUTH = `${API_PREFIX}/auth`
 
 const GITLAB_URL = 'http://gitlab.test'
 const GITLAB_ENV = {
@@ -33,7 +35,7 @@ describe('GET /auth/gitlab/callback - without env vars', () => {
   })
 
   it('→ 503 when GitLab env vars not configured', async () => {
-    const response = await app.inject({ method: 'GET', url: '/auth/gitlab/callback?code=abc' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=abc` })
     assert.equal(response.statusCode, 503)
     const body = response.json<{ error: string }>()
     assert.equal(body.error, 'GitLab OAuth2 not configured')
@@ -75,7 +77,7 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
   })
 
   it('missing code query param → 400', async () => {
-    const response = await app.inject({ method: 'GET', url: '/auth/gitlab/callback' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback` })
     assert.equal(response.statusCode, 400)
     const body = response.json<{ error: string }>()
     assert.equal(body.error, 'Missing OAuth2 code')
@@ -87,7 +89,7 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
     setGlobalDispatcher(agent)
     agent.get(GITLAB_URL).intercept({ path: '/oauth/token', method: 'POST' }).reply(400, { error: 'bad_code' })
 
-    const response = await app.inject({ method: 'GET', url: '/auth/gitlab/callback?code=bad' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=bad` })
     assert.equal(response.statusCode, 502)
     const body = response.json<{ error: string }>()
     assert.equal(body.error, 'Failed to exchange GitLab code')
@@ -101,7 +103,7 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
     pool.intercept({ path: '/oauth/token', method: 'POST' }).reply(200, { access_token: 'gl-token' })
     pool.intercept({ path: '/api/v4/user', method: 'GET' }).reply(401, { message: 'Unauthorized' })
 
-    const response = await app.inject({ method: 'GET', url: '/auth/gitlab/callback?code=valid' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=valid` })
     assert.equal(response.statusCode, 502)
     const body = response.json<{ error: string }>()
     assert.equal(body.error, 'Failed to fetch GitLab user profile')
@@ -115,7 +117,7 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
     pool.intercept({ path: '/oauth/token', method: 'POST' }).reply(200, { access_token: 'gl-token' })
     pool.intercept({ path: '/api/v4/user', method: 'GET' }).reply(200, mockGitlabUser)
 
-    const response = await app.inject({ method: 'GET', url: '/auth/gitlab/callback?code=valid' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=valid` })
     assert.equal(response.statusCode, 200)
     const body = response.json<{ accessToken: string; userId: string }>()
     assert.ok(typeof body.accessToken === 'string' && body.accessToken.length > 0)

@@ -2,10 +2,12 @@ import { describe, it, beforeAll, afterAll } from 'vitest'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcrypt'
-import { buildTestApp } from '../helpers/build'
+import { buildTestApp, API_PREFIX } from '../helpers/build'
 import { makeMockPrisma } from '../helpers/prisma'
 import { hashToken } from '../../lib/hash'
 import type { FastifyInstance } from 'fastify'
+
+const AUTH = `${API_PREFIX}/auth`
 
 const mockUserBase = {
   id: 'user-uuid-1',
@@ -44,7 +46,7 @@ describe('POST /auth/register', () => {
   it('success → 201, body has accessToken and userId, sets refresh_token cookie', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: `${AUTH}/register`,
       payload: { email: 'new@example.com', password: 'password123' },
     })
     assert.equal(response.statusCode, 201)
@@ -60,7 +62,7 @@ describe('POST /auth/register', () => {
   it('invalid email → 400', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: `${AUTH}/register`,
       payload: { email: 'not-an-email', password: 'password123' },
     })
     assert.equal(response.statusCode, 400)
@@ -69,7 +71,7 @@ describe('POST /auth/register', () => {
   it('password too short (< 8 chars) → 400', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: `${AUTH}/register`,
       payload: { email: 'short@example.com', password: 'abc' },
     })
     assert.equal(response.statusCode, 400)
@@ -96,7 +98,7 @@ describe('POST /auth/register - duplicate email', () => {
   it('duplicate email → 409', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/register',
+      url: `${AUTH}/register`,
       payload: { email: 'test@example.com', password: 'password123' },
     })
     assert.equal(response.statusCode, 409)
@@ -127,7 +129,7 @@ describe('POST /auth/login', () => {
   it('success → 200, body has accessToken and userId, sets cookie', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/login',
+      url: `${AUTH}/login`,
       payload: { email: 'test@example.com', password: 'password123' },
     })
     assert.equal(response.statusCode, 200)
@@ -143,7 +145,7 @@ describe('POST /auth/login', () => {
   it('wrong password → 401 { error: "Invalid credentials" }', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/login',
+      url: `${AUTH}/login`,
       payload: { email: 'test@example.com', password: 'wrongpassword' },
     })
     assert.equal(response.statusCode, 401)
@@ -168,7 +170,7 @@ describe('POST /auth/login - unknown email', () => {
   it('unknown email → 401', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/login',
+      url: `${AUTH}/login`,
       payload: { email: 'nobody@example.com', password: 'password123' },
     })
     assert.equal(response.statusCode, 401)
@@ -213,7 +215,7 @@ describe('POST /auth/refresh', () => {
   it('valid cookie → 200, body has accessToken', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/refresh',
+      url: `${AUTH}/refresh`,
       headers: { cookie: `refresh_token=${refreshToken}` },
     })
     assert.equal(response.statusCode, 200)
@@ -222,7 +224,7 @@ describe('POST /auth/refresh', () => {
   })
 
   it('no cookie → 401 { error: "No refresh token" }', async () => {
-    const response = await app.inject({ method: 'POST', url: '/auth/refresh' })
+    const response = await app.inject({ method: 'POST', url: `${AUTH}/refresh` })
     assert.equal(response.statusCode, 401)
     const body = response.json<{ error: string }>()
     assert.equal(body.error, 'No refresh token')
@@ -231,7 +233,7 @@ describe('POST /auth/refresh', () => {
   it('invalid JWT → 401', async () => {
     const response = await app.inject({
       method: 'POST',
-      url: '/auth/refresh',
+      url: `${AUTH}/refresh`,
       headers: { cookie: 'refresh_token=thisisnotavalidtoken' },
     })
     assert.equal(response.statusCode, 401)
@@ -250,7 +252,7 @@ describe('POST /auth/refresh', () => {
     )
     const response = await isolatedApp.inject({
       method: 'POST',
-      url: '/auth/refresh',
+      url: `${AUTH}/refresh`,
       headers: { cookie: `refresh_token=${orphanToken}` },
     })
     await isolatedApp.close()
@@ -283,7 +285,7 @@ describe('POST /auth/refresh', () => {
     )
     const response = await isolatedApp.inject({
       method: 'POST',
-      url: '/auth/refresh',
+      url: `${AUTH}/refresh`,
       headers: { cookie: `refresh_token=${revokedToken}` },
     })
     await isolatedApp.close()
@@ -311,7 +313,7 @@ describe('GET /auth/logout', () => {
   })
 
   it('→ 200 { ok: true }, clears refresh_token cookie', async () => {
-    const response = await app.inject({ method: 'GET', url: '/auth/logout' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/logout` })
     assert.equal(response.statusCode, 200)
     const body = response.json<{ ok: boolean }>()
     assert.equal(body.ok, true)
@@ -341,7 +343,7 @@ describe('GET /auth/gitlab', () => {
   })
 
   it('without env vars → 503', async () => {
-    const response = await app.inject({ method: 'GET', url: '/auth/gitlab' })
+    const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab` })
     assert.equal(response.statusCode, 503)
   })
 })

@@ -39,8 +39,9 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<ReturnType<t
   await fastify.register(jwtPlugin)
 
   // Routes
-  await fastify.register(healthRoutes)
-  await fastify.register(authRoutes, { prefix: '/auth' })
+  const API_PREFIX = '/api/v1'
+  await fastify.register(healthRoutes, { prefix: API_PREFIX })
+  await fastify.register(authRoutes, { prefix: `${API_PREFIX}/auth` })
 
   return fastify
 }

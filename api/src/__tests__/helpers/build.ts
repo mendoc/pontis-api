@@ -8,6 +8,7 @@ const keypair = forge.pki.rsa.generateKeyPair({ bits: 2048 })
 export const TEST_PRIVATE_KEY = forge.pki.privateKeyToPem(keypair.privateKey)
 export const TEST_PUBLIC_KEY = forge.pki.publicKeyToPem(keypair.publicKey)
 export const TEST_REFRESH_SECRET = 'test-refresh-secret-for-unit-tests'
+export const API_PREFIX = '/api/v1'
 
 export interface BuildTestAppOptions {
   prisma?: PrismaClient
