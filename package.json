@@ -1,0 +1,17 @@
+{
+  "name": "pontis",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "api",
+    "web",
+    "worker"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w api",
+    "build:api": "npm run build -w api"
+  },
+"engines": {
+    "node": ">=20"
+  }
+}

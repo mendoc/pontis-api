@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String?
+  gitlabId     Int?      @unique
+  gitlabToken  String?
+  createdAt    DateTime  @default(now())
+  projects     Project[]
+}
+
+model Project {
+  id          String       @id @default(uuid())
+  userId      String
+  name        String
+  slug        String       @unique
+  type        ProjectType
+  domain      String?
+  status      String       @default("inactive")
+  user        User         @relation(fields: [userId], references: [id])
+  deployments Deployment[]
+  envVars     EnvVar[]
+  port        Port?
+}
+
+enum ProjectType {
+  git
+  static
+}
+
+model Deployment {
+  id        String           @id @default(uuid())
+  projectId String
+  commitSha String?
+  status    DeploymentStatus @default(pending)
+  logs      String?
+  createdAt DateTime         @default(now())
+  project   Project          @relation(fields: [projectId], references: [id])
+}
+
+enum DeploymentStatus {
+  pending
+  building
+  success
+  failed
+}
+
+model EnvVar {
+  id             String  @id @default(uuid())
+  projectId      String
+  key            String
+  valueEncrypted String
+  project        Project @relation(fields: [projectId], references: [id])
+}
+
+model Port {
+  id          String   @id @default(uuid())
+  portNumber  Int      @unique
+  projectId   String   @unique
+  allocatedAt DateTime @default(now())
+  project     Project  @relation(fields: [projectId], references: [id])
+}
