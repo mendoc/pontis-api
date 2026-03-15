@@ -5,11 +5,13 @@
   "workspaces": [
     "api",
     "web",
-    "worker"
+    "worker",
+    "webhook"
   ],
   "scripts": {
     "dev:api": "npm run dev -w api",
-    "build:api": "npm run build -w api"
+    "build:api": "npm run build -w api",
+    "deploy:api": "npm run deploy -w api"
   },
 "engines": {
     "node": ">=20"

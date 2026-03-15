@@ -13,10 +13,10 @@ COPY api/prisma ./prisma/
 # --ignore-scripts skips postinstall (prisma migrate deploy needs a running DB — handled at startup)
 RUN npm pkg delete scripts.postinstall && npm install && npx prisma generate
 
-COPY api/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY api/scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3001
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["npm", "run", "dev:docker"]
+CMD ["npm", "run", "dev"]

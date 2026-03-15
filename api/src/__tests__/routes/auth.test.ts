@@ -290,7 +290,7 @@ describe('POST /auth/refresh', () => {
     })
     await isolatedApp.close()
     assert.equal(response.statusCode, 401)
-    const body = response.json<{ error: string }>()
+    const body = response.json() as { error: string }
     assert.equal(body.error, 'Refresh token reuse detected')
     assert.ok(familyRevoked, 'entire family should be revoked')
   })

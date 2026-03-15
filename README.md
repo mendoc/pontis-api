@@ -68,12 +68,29 @@ exit
 | `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` | Clés RS256 — auto-générées en dev, **obligatoires en prod** |
 | `JWT_REFRESH_SECRET` | Secret HMAC pour les refresh tokens |
 | `GITLAB_URL` / `GITLAB_CLIENT_ID` / `GITLAB_CLIENT_SECRET` / `GITLAB_CALLBACK_URL` | OAuth2 GitLab CE (optionnel en dev) |
+| `GHCR_TOKEN` | Token GitHub (`write:packages`) pour pousser l'image sur GHCR |
 
 Générer les clés JWT pour la production :
 
 ```bash
 ./scripts/gen-jwt-keys.sh >> .env
 ```
+
+## Déploiement (GHCR)
+
+Définir le token GitHub avec les droits `write:packages` :
+
+```bash
+export GHCR_TOKEN=ghp_xxx
+```
+
+Builder et pousser l'image API sur `ghcr.io/mendoc/pontis-api` :
+
+```bash
+npm run deploy:api
+```
+
+L'image est taguée avec la version du `package.json` **et** `:latest`.
 
 ## Commandes utiles
 
