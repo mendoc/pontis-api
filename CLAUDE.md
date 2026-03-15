@@ -12,6 +12,7 @@ Pontis is a self-hosted PaaS (Platform as a Service) — a Netlify/Vercel/Heroku
 
 ```
 /api      — Fastify backend (Node.js 20), port 3001  ✅ implemented
+/webhook  — GitHub webhook receiver (Node.js, no deps), port 9000  ✅ implemented
 /web      — Next.js 14 dashboard (App Router + Tailwind CSS)  🔜 planned
 /worker   — BullMQ background worker (build jobs)  🔜 planned
 ```
@@ -117,6 +118,15 @@ Port allocation range: **10000–60000**, tracked in the `ports` table.
 - User env vars: encrypted AES-256-GCM before storing in database; injected at container start via `--env-file`; never logged or shown in UI after entry.
 - Porkbun API keys are environment variables on the host, never committed.
 - Every deployed project container runs as non-root.
+
+## Webhook Service (`/webhook/`)
+
+Minimal GitHub webhook receiver — zero external dependencies, pure Node.js stdlib.
+
+- **Route:** `POST /deploy/:slug` — verifies `X-Hub-Signature-256` HMAC-SHA256, ignores non-default-branch pushes, then runs `docker compose pull` + `docker compose up -d` + `docker image prune -f` against `$APPS_DIR/<slug>/docker-compose.yml`.
+- **Concurrency guard:** one deploy at a time per slug (in-memory `Set`); duplicate pushes are silently skipped.
+- **Required env vars:** `GITHUB_WEBHOOK_SECRET`, `APPS_DIR` (path to the directory containing per-app subdirs).
+- **Run:** `node server.js` (no build step). Deployed via its own `docker-compose.yml` in `/webhook/`.
 
 ## API Architecture (`/api/src/`)
 

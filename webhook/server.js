@@ -1,0 +1,180 @@
+// Serveur webhook — aucune dépendance externe
+// Route: POST /deploy/:slug
+// Récupère docker-compose.yml depuis GitHub, l'écrit dans $APPS_DIR/<slug>/,
+// puis exécute docker compose pull + up -d + image prune.
+// Vérifie les signatures HMAC-SHA256 de GitHub.
+
+'use strict';
+
+const http   = require('http');   // serveur HTTP entrant
+const https  = require('https');  // fetch GitHub sortant
+const crypto = require('crypto');
+const { execFile } = require('child_process');
+const path = require('path');
+const fs   = require('fs');
+
+const PORT         = 9000;
+const SECRET       = process.env.GITHUB_WEBHOOK_SECRET;
+const APPS_DIR     = process.env.APPS_DIR;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || null; // optionnel, requis pour les dépôts privés
+
+if (!SECRET) {
+  console.error('FATAL : GITHUB_WEBHOOK_SECRET n\'est pas défini');
+  process.exit(1);
+}
+if (!APPS_DIR) {
+  console.error('FATAL : APPS_DIR n\'est pas défini');
+  process.exit(1);
+}
+if (!GITHUB_TOKEN) {
+  console.warn('[webhook] GITHUB_TOKEN non défini — seuls les dépôts publics fonctionneront');
+}
+
+// Garde : un seul déploiement à la fois par slug
+const running = new Set();
+
+function verifySignature(secret, body, sigHeader) {
+  if (!sigHeader || !sigHeader.startsWith('sha256=')) return false;
+  const expected = 'sha256=' + crypto
+    .createHmac('sha256', secret)
+    .update(body)
+    .digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(sigHeader), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+function runStep(cmd, args, slug) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, (err, stdout, stderr) => {
+      if (stdout) console.log(`[${slug}]`, stdout.trim());
+      if (stderr) console.log(`[${slug}]`, stderr.trim());
+      if (err) reject(err);
+      else resolve();
+    });
+  });
+}
+
+function fetchComposeFile(fullName, branch) {
+  const url = `https://raw.githubusercontent.com/${fullName}/${branch}/docker-compose.yml`;
+  const options = { headers: { 'User-Agent': 'pontis-webhook/1.0' } };
+  if (GITHUB_TOKEN) options.headers['Authorization'] = `Bearer ${GITHUB_TOKEN}`;
+
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, options, (res) => {
+      if (res.statusCode === 404) {
+        reject(new Error(`docker-compose.yml introuvable dans ${fullName}@${branch} (404)`));
+        return;
+      }
+      if (res.statusCode === 401 || res.statusCode === 403) {
+        reject(new Error(`Accès refusé pour ${fullName}@${branch} (${res.statusCode}) — GITHUB_TOKEN est-il défini ?`));
+        return;
+      }
+      if (res.statusCode !== 200) {
+        reject(new Error(`Statut inattendu ${res.statusCode} lors du fetch depuis ${fullName}@${branch}`));
+        return;
+      }
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => {
+      req.destroy();
+      reject(new Error(`Délai dépassé lors du fetch depuis ${fullName}@${branch}`));
+    });
+  });
+}
+
+function writeComposeFile(slug, content) {
+  const dir  = path.join(APPS_DIR, slug);
+  const file = path.join(dir, 'docker-compose.yml');
+  return new Promise((resolve, reject) => {
+    fs.mkdir(dir, { recursive: true }, (err) => {
+      if (err) { reject(err); return; }
+      fs.writeFile(file, content, 'utf8', (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+  });
+}
+
+async function runDeploy(slug, fullName, branch) {
+  if (running.has(slug)) {
+    console.log(`[${slug}] Déploiement déjà en cours, ignoré.`);
+    return;
+  }
+
+  running.add(slug);
+  console.log(`[${slug}] Démarrage du déploiement (${fullName}@${branch})...`);
+  try {
+    console.log(`[${slug}] Récupération de docker-compose.yml depuis ${fullName}@${branch}...`);
+    const content = await fetchComposeFile(fullName, branch);
+    await writeComposeFile(slug, content);
+    console.log(`[${slug}] docker-compose.yml écrit dans ${path.join(APPS_DIR, slug)}/`);
+
+    const composeFile = path.join(APPS_DIR, slug, 'docker-compose.yml');
+    await runStep('docker', ['compose', '-f', composeFile, 'pull'], slug);
+    await runStep('docker', ['compose', '-f', composeFile, 'up', '-d'], slug);
+    await runStep('docker', ['image', 'prune', '-f'], slug);
+    console.log(`[${slug}] Déploiement réussi.`);
+  } catch (err) {
+    console.error(`[${slug}] Échec du déploiement :`, err.message);
+  } finally {
+    running.delete(slug);
+  }
+}
+
+const server = http.createServer((req, res) => {
+  const match = req.method === 'POST' && req.url.match(/^\/deploy\/([a-z0-9_-]+)$/);
+  if (!match) {
+    res.writeHead(404).end('Not found');
+    return;
+  }
+  const slug = match[1];
+
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
+  req.on('end', () => {
+    const body = Buffer.concat(chunks);
+    const sig  = req.headers['x-hub-signature-256'];
+
+    if (!verifySignature(SECRET, body, sig)) {
+      res.writeHead(400).end('Invalid signature');
+      return;
+    }
+
+    // Ping GitHub (envoyé à la création du webhook)
+    if (req.headers['x-github-event'] === 'ping') {
+      res.writeHead(200).end('pong');
+      return;
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(body.toString('utf8'));
+    } catch {
+      res.writeHead(400).end('Invalid JSON');
+      return;
+    }
+
+    if (payload.ref !== `refs/heads/${payload.repository?.default_branch}`) {
+      res.writeHead(200).end('Ignored (not default branch)');
+      return;
+    }
+
+    res.writeHead(202).end('Accepted');
+    const fullName = payload.repository.full_name;
+    const branch   = payload.ref.replace('refs/heads/', '');
+    runDeploy(slug, fullName, branch);
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`[webhook] En écoute sur le port ${PORT}`);
+  console.log(`[webhook] Répertoire des applications : ${APPS_DIR}`);
+});
