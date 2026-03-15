@@ -4,18 +4,17 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file: .env
     environment:
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
       APPS_DIR: ${APPS_DIR}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}   # vide = dépôts publics seulement
+      PATHS_CONFIG: /config/paths.json  # chemin fixe dans le conteneur
     volumes:
       - ${APPS_DIR}:/apps
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${PATHS_CONFIG_FILE:-/dev/null}:/config/paths.json:ro
     networks:
       - pontis_network
-    ports:
-      - "9000:9000" # A supprimer en prod, Traefik s'en chargera
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.webhook.rule=Host(`hooks.pontis.ongoua.pro`)"
@@ -26,4 +25,4 @@ services:
 
 networks:
   pontis_network:
-    # external: true
+    external: true

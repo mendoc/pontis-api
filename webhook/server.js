@@ -17,6 +17,7 @@ const PORT         = 9000;
 const SECRET       = process.env.GITHUB_WEBHOOK_SECRET;
 const APPS_DIR     = process.env.APPS_DIR;
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || null; // optionnel, requis pour les dépôts privés
+const PATHS_CONFIG = process.env.PATHS_CONFIG || null; // chemin vers le fichier JSON de surcharge slug→chemin (optionnel)
 
 if (!SECRET) {
   console.error('FATAL : GITHUB_WEBHOOK_SECRET n\'est pas défini');
@@ -32,6 +33,22 @@ if (!GITHUB_TOKEN) {
 
 // Garde : un seul déploiement à la fois par slug
 const running = new Set();
+
+function resolveProjectDir(slug) {
+  if (PATHS_CONFIG) {
+    try {
+      const raw = fs.readFileSync(PATHS_CONFIG, 'utf8');
+      const map = JSON.parse(raw);
+      if (map[slug]) {
+        console.log(`[${slug}] Chemin personnalisé : ${map[slug]}`);
+        return map[slug];
+      }
+    } catch (err) {
+      console.warn(`[${slug}] Impossible de lire ${PATHS_CONFIG} : ${err.message} — chemin par défaut utilisé`);
+    }
+  }
+  return path.join(APPS_DIR, slug);
+}
 
 function verifySignature(secret, body, sigHeader) {
   if (!sigHeader || !sigHeader.startsWith('sha256=')) return false;
@@ -107,8 +124,7 @@ async function fetchComposeFile(fullName, branch) {
   throw new Error(`Aucun fichier compose (${candidates.join(', ')}) trouvé dans ${fullName}@${branch}`);
 }
 
-function writeComposeFile(slug, filename, content) {
-  const dir  = path.join(APPS_DIR, slug);
+function writeComposeFile(slug, dir, filename, content) {
   const file = path.join(dir, filename);
   return new Promise((resolve, reject) => {
     fs.mkdir(dir, { recursive: true }, (err) => {
@@ -133,10 +149,11 @@ async function runDeploy(slug, fullName, branch) {
     console.log(`[${slug}] Récupération du fichier compose depuis ${fullName}@${branch}...`);
     const { content, filename } = await fetchComposeFile(fullName, branch);
     console.log(`[${slug}] Fichier trouvé : ${filename}`);
-    await writeComposeFile(slug, filename, content);
-    console.log(`[${slug}] ${filename} écrit dans ${path.join(APPS_DIR, slug)}/`);
+    const projectDir = resolveProjectDir(slug);
+    await writeComposeFile(slug, projectDir, filename, content);
+    console.log(`[${slug}] ${filename} écrit dans ${projectDir}/`);
 
-    const composeFile = path.join(APPS_DIR, slug, filename);
+    const composeFile = path.join(projectDir, filename);
     await runStep('docker', ['compose', '-f', composeFile, 'pull'], slug);
     await runStep('docker', ['compose', '-f', composeFile, 'up', '-d'], slug);
     await runStep('docker', ['image', 'prune', '-f'], slug);
