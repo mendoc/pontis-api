@@ -38,11 +38,13 @@ cd api && npm run build  # TypeScript → dist/
 
 **Tests — Vitest (TypeScript natif, découverte automatique) :**
 ```bash
-cd api && npm test                                              # run once
-cd api && npm run test:watch                                   # watch mode
-cd api && npx vitest run src/__tests__/routes/auth.test.ts    # single file
+cd api && npm test                                                        # run once
+cd api && npm run test:watch                                              # watch mode
+cd api && npx vitest run src/__tests__/modules/auth.service.test.ts     # single file
 ```
-`NODE_ENV=test` et `BCRYPT_ROUNDS=1` sont injectés par `vitest.config.ts`. Le helper `api/src/__tests__/helpers/build.ts` crée une instance Fastify en mémoire avec une paire RSA 2048 bits de test ; `helpers/prisma.ts` fournit une factory de mock Prisma.
+`NODE_ENV=test` et `BCRYPT_ROUNDS=1` sont injectés par `vitest.config.ts`. Le helper `api/src/__tests__/helpers/build.ts` crée une instance Fastify en mémoire via `buildApp({ prismaOverride })` avec une paire RSA 2048 bits de test ; `helpers/prisma.ts` fournit une factory de mock Prisma.
+
+Tests organisés en `src/__tests__/{modules,routes,plugins,middleware}/`.
 
 **Database:**
 ```bash
@@ -64,7 +66,7 @@ cd api && npm run db:studio     # Prisma Studio GUI
 | Containers | Docker Engine 29.x + Docker SDK (node) |
 | Reverse Proxy | Traefik v3 (dynamic config via Docker labels) |
 | SSL | Let's Encrypt wildcard via ACME DNS-01 (Porkbun) |
-| Auth | Passport.js (OAuth2 GitLab CE) + JWT RS256 (email/password) |
+| Auth | GitLab OAuth2 (custom implementation via undici) + JWT RS256 (email/password) |
 | Build detection | Nixpacks |
 
 ## Architecture
@@ -92,10 +94,13 @@ Traefik label uniqueness is enforced by slug (stored in PostgreSQL), not by the 
 | Table | Key fields |
 |---|---|
 | `users` | id, email, password_hash, gitlab_id, gitlab_token, created_at |
+| `refresh_tokens` | id, user_id, family_id, token_hash, expires_at, revoked_at |
 | `projects` | id, user_id, name, slug, type (git\|static), domain, port, status |
 | `deployments` | id, project_id, commit_sha, status (pending\|building\|success\|failed), logs, created_at |
 | `env_vars` | id, project_id, key, value_encrypted |
 | `ports` | id, port_number, project_id, allocated_at |
+
+Refresh tokens use a **token family** pattern: reusing a revoked token revokes all tokens in the same family (reuse detection).
 
 Port allocation range: **10000–60000**, tracked in the `ports` table.
 
@@ -123,18 +128,25 @@ Port allocation range: **10000–60000**, tracked in the `ports` table.
 
 Minimal GitHub webhook receiver — zero external dependencies, pure Node.js stdlib.
 
-- **Route:** `POST /deploy/:slug` — verifies `X-Hub-Signature-256` HMAC-SHA256, ignores non-default-branch pushes, then runs `docker compose pull` + `docker compose up -d` + `docker image prune -f` against `$APPS_DIR/<slug>/docker-compose.yml`.
+- **Route:** `POST /deploy/:slug` — verifies `X-Hub-Signature-256` HMAC-SHA256, ignores non-default-branch pushes, then: fetches `docker-compose.yml` (or `compose.yml`) from the GitHub repo's raw content, writes it to `$APPS_DIR/<slug>/`, then runs `docker compose pull` + `docker compose up -d` + `docker image prune -f`.
 - **Concurrency guard:** one deploy at a time per slug (in-memory `Set`); duplicate pushes are silently skipped.
 - **Required env vars:** `GITHUB_WEBHOOK_SECRET`, `APPS_DIR` (path to the directory containing per-app subdirs).
+- **Optional env vars:** `GITHUB_TOKEN` (required for private repos), `PATHS_CONFIG` (path to a JSON file mapping `slug → custom project dir`, overrides `$APPS_DIR/<slug>`).
 - **Run:** `node server.js` (no build step). Deployed via its own `docker-compose.yml` in `/webhook/`.
 
 ## API Architecture (`/api/src/`)
 
-- **`app.ts`** — Fastify app builder; registers plugins (cors, cookies, prisma, jwt) and mounts routes (`/health`, `/auth`)
+All routes are mounted under the `/api/v1` prefix.
+
+- **`app.ts`** — Fastify app builder; accepts `prismaOverride` option (used in tests); registers plugins (cors, cookies, prisma, jwt) and mounts routes
 - **`index.ts`** — entry point; binds to `0.0.0.0:3001`
 - **`plugins/jwt.ts`** — RS256 access tokens (15 min) via `jsonwebtoken`; HS256 refresh tokens (7 days) stored as httpOnly `refresh_token` cookie; auto-generates ephemeral RSA keypair in dev
 - **`plugins/prisma.ts`** — singleton PrismaClient decorated onto Fastify instance
-- **`routes/auth/`** — register, login, refresh, logout, GitLab OAuth2 (`/auth/gitlab` + callback); schemas in `schemas.ts` (Zod)
+- **`modules/auth/`** — auth module split into four files:
+  - `auth.routes.ts` — register, login, refresh, logout, GitLab OAuth2 (`/auth/gitlab` + callback)
+  - `auth.service.ts` — `AuthService` class; depends on `JwtOperations` interface (injected from jwt plugin)
+  - `auth.schemas.ts` — Zod schemas for request bodies
+  - `auth.errors.ts` — `AuthError` class with typed `AuthErrorCode` enum
 - **`middleware/authenticate.ts`** — Bearer token extractor; throws 401 on missing/invalid/expired token; decorate protected routes with `{ preHandler: [authenticate] }`
 
 ## Development Roadmap
