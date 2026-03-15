@@ -57,23 +57,27 @@ function runStep(cmd, args, slug) {
   });
 }
 
-function fetchComposeFile(fullName, branch) {
-  const url = `https://raw.githubusercontent.com/${fullName}/${branch}/docker-compose.yml`;
+// Tente de récupérer un fichier brut depuis GitHub. Résout avec le contenu si trouvé (200),
+// résout avec null si introuvable (404), rejette pour toute autre erreur.
+function fetchRaw(url) {
   const options = { headers: { 'User-Agent': 'pontis-webhook/1.0' } };
   if (GITHUB_TOKEN) options.headers['Authorization'] = `Bearer ${GITHUB_TOKEN}`;
 
   return new Promise((resolve, reject) => {
     const req = https.get(url, options, (res) => {
       if (res.statusCode === 404) {
-        reject(new Error(`docker-compose.yml introuvable dans ${fullName}@${branch} (404)`));
+        res.resume(); // vider le flux
+        resolve(null);
         return;
       }
       if (res.statusCode === 401 || res.statusCode === 403) {
-        reject(new Error(`Accès refusé pour ${fullName}@${branch} (${res.statusCode}) — GITHUB_TOKEN est-il défini ?`));
+        res.resume();
+        reject(new Error(`Accès refusé (${res.statusCode}) — GITHUB_TOKEN est-il défini ?`));
         return;
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`Statut inattendu ${res.statusCode} lors du fetch depuis ${fullName}@${branch}`));
+        res.resume();
+        reject(new Error(`Statut inattendu ${res.statusCode} pour ${url}`));
         return;
       }
       const chunks = [];
@@ -84,14 +88,28 @@ function fetchComposeFile(fullName, branch) {
     req.on('error', reject);
     req.setTimeout(15000, () => {
       req.destroy();
-      reject(new Error(`Délai dépassé lors du fetch depuis ${fullName}@${branch}`));
+      reject(new Error(`Délai dépassé pour ${url}`));
     });
   });
 }
 
-function writeComposeFile(slug, content) {
+// Essaie docker-compose.yml puis compose.yml. Retourne { content, filename }.
+async function fetchComposeFile(fullName, branch) {
+  const candidates = ['docker-compose.yml', 'compose.yml'];
+  const base = `https://raw.githubusercontent.com/${fullName}/${branch}`;
+
+  for (const filename of candidates) {
+    const content = await fetchRaw(`${base}/${filename}`);
+    if (content !== null) {
+      return { content, filename };
+    }
+  }
+  throw new Error(`Aucun fichier compose (${candidates.join(', ')}) trouvé dans ${fullName}@${branch}`);
+}
+
+function writeComposeFile(slug, filename, content) {
   const dir  = path.join(APPS_DIR, slug);
-  const file = path.join(dir, 'docker-compose.yml');
+  const file = path.join(dir, filename);
   return new Promise((resolve, reject) => {
     fs.mkdir(dir, { recursive: true }, (err) => {
       if (err) { reject(err); return; }
@@ -112,12 +130,13 @@ async function runDeploy(slug, fullName, branch) {
   running.add(slug);
   console.log(`[${slug}] Démarrage du déploiement (${fullName}@${branch})...`);
   try {
-    console.log(`[${slug}] Récupération de docker-compose.yml depuis ${fullName}@${branch}...`);
-    const content = await fetchComposeFile(fullName, branch);
-    await writeComposeFile(slug, content);
-    console.log(`[${slug}] docker-compose.yml écrit dans ${path.join(APPS_DIR, slug)}/`);
+    console.log(`[${slug}] Récupération du fichier compose depuis ${fullName}@${branch}...`);
+    const { content, filename } = await fetchComposeFile(fullName, branch);
+    console.log(`[${slug}] Fichier trouvé : ${filename}`);
+    await writeComposeFile(slug, filename, content);
+    console.log(`[${slug}] ${filename} écrit dans ${path.join(APPS_DIR, slug)}/`);
 
-    const composeFile = path.join(APPS_DIR, slug, 'docker-compose.yml');
+    const composeFile = path.join(APPS_DIR, slug, filename);
     await runStep('docker', ['compose', '-f', composeFile, 'pull'], slug);
     await runStep('docker', ['compose', '-f', composeFile, 'up', '-d'], slug);
     await runStep('docker', ['image', 'prune', '-f'], slug);
