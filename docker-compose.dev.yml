@@ -27,7 +27,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ..
       dockerfile: api/Dockerfile.dev
     env_file: .env
     environment:
@@ -38,7 +38,7 @@ services:
     ports:
       - "3001:3001"
     volumes:
-      - ./api:/app
+      - .:/app
       - api_node_modules:/app/node_modules   # preserve image's node_modules
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
