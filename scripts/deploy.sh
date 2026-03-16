@@ -16,10 +16,9 @@ echo "${GHCR_TOKEN}" | docker login "${REGISTRY}" -u mendoc --password-stdin
 # ── Build ────────────────────────────────────────────────────────────────────
 echo "→ Building ${IMAGE}:${VERSION} ..."
 docker build \
-  -f Dockerfile \
   -t "${IMAGE}:${VERSION}" \
   -t "${IMAGE}:latest" \
-  ..
+  .
 
 # ── Push ─────────────────────────────────────────────────────────────────────
 echo "→ Pushing ${IMAGE}:${VERSION} ..."

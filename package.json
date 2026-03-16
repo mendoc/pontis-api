@@ -1,6 +1,6 @@
 {
   "name": "@pontis/api",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
     "dev": "dotenv -e .env -- ts-node-dev --respawn --transpile-only src/index.ts",
@@ -10,7 +10,6 @@
     "db:migrate": "dotenv -e .env -- prisma migrate dev",
     "db:generate": "dotenv -e .env -- prisma generate",
     "db:studio": "dotenv -e .env -- prisma studio",
-    "postinstall": "dotenv -e .env -- prisma migrate deploy",
     "test": "vitest run",
     "test:watch": "vitest",
     "deploy": "dotenv -e .env -- sh scripts/deploy.sh"
