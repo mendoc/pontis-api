@@ -20,6 +20,7 @@ RUN npm run build
 FROM node:20-alpine AS runner
 
 LABEL org.opencontainers.image.source="https://github.com/mendoc/pontis-api"
+LABEL org.opencontainers.image.description="Pontis API — backend d'une plateforme PaaS auto-hébergée"
 
 WORKDIR /app
 
