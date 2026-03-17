@@ -97,6 +97,7 @@ export async function buildAndRunStaticProject(
         [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
         [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
         [`traefik.http.routers.${slug}.tls`]: 'true',
+        [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
         [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
       },
       HostConfig: {

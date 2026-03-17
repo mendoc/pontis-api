@@ -1,6 +1,6 @@
 {
   "name": "@pontis/api",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "scripts": {
     "dev": "dotenv -e .env -- ts-node-dev --respawn --transpile-only src/index.ts",
