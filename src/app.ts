@@ -5,8 +5,10 @@ import { PrismaClient } from '@prisma/client'
 
 import prismaPlugin from './plugins/prisma'
 import jwtPlugin from './plugins/jwt'
+import dockerPlugin from './plugins/docker'
 import healthRoutes from './routes/health'
 import authRoutes from './modules/auth/auth.routes'
+import projectsRoutes from './modules/projects/projects.routes'
 
 export interface BuildAppOptions {
   prismaOverride?: PrismaClient
@@ -37,11 +39,13 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<ReturnType<t
   }
 
   await fastify.register(jwtPlugin)
+  await fastify.register(dockerPlugin)
 
   // Routes
   const API_PREFIX = '/api/v1'
   await fastify.register(healthRoutes, { prefix: API_PREFIX })
   await fastify.register(authRoutes, { prefix: `${API_PREFIX}/auth` })
+  await fastify.register(projectsRoutes, { prefix: `${API_PREFIX}/projects` })
 
   return fastify
 }

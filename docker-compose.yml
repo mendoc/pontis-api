@@ -50,6 +50,10 @@ services:
       GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID}
       GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET}
       GITLAB_CALLBACK_URL: ${GITLAB_CALLBACK_URL}
+      APP_DOMAIN: app.ongoua.pro
+      DOCKER_NETWORK: pontis_network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy
