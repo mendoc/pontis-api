@@ -29,6 +29,14 @@ services:
       timeout: 5s
       retries: 5
 
+  mailpit:
+    image: axllent/mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+    networks:
+      - pontis_network
+
   api:
     image: ghcr.io/mendoc/pontis-api:latest
     restart: unless-stopped
@@ -39,11 +47,24 @@ services:
       JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
       JWT_PUBLIC_KEY: ${JWT_PUBLIC_KEY}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_SECURE: "false"
+      SMTP_USER: ""
+      SMTP_PASS: ""
+      SMTP_FROM: "Pontis <no-reply@pontis.ongoua.pro>"
+      FRONTEND_URL: ${FRONTEND_URL}
+      GITLAB_URL: ${GITLAB_URL}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET}
+      GITLAB_CALLBACK_URL: ${GITLAB_CALLBACK_URL}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/v1/health || exit 1"]
       interval: 10s

@@ -8,14 +8,29 @@ datasource db {
 }
 
 model User {
-  id             String         @id @default(uuid())
-  email          String         @unique
-  passwordHash   String?
-  gitlabId       Int?           @unique
-  gitlabToken    String?
-  createdAt      DateTime       @default(now())
-  projects       Project[]
-  refreshTokens  RefreshToken[]
+  id                  String               @id @default(uuid())
+  email               String               @unique
+  passwordHash        String?
+  gitlabId            Int?                 @unique
+  gitlabToken         String?
+  createdAt           DateTime             @default(now())
+  projects            Project[]
+  refreshTokens       RefreshToken[]
+  passwordResetCodes  PasswordResetCode[]
+}
+
+model PasswordResetCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_codes")
 }
 
 model RefreshToken {

@@ -29,6 +29,13 @@ services:
       timeout: 5s
       retries: 5
 
+  mailpit:
+    image: axllent/mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   api:
     build:
       context: .
@@ -50,6 +57,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/v1/health || exit 1"]
       interval: 10s

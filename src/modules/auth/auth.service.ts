@@ -3,6 +3,7 @@ import { fetch } from 'undici'
 import { randomUUID } from 'node:crypto'
 import { PrismaClient } from '@prisma/client'
 import { hashToken } from '../../lib/hash'
+import { sendPasswordResetEmail } from '../../lib/mailer'
 import { AuthError } from './auth.errors'
 import type { JwtPayload } from '../../plugins/jwt'
 
@@ -53,7 +54,8 @@ export class AuthService {
     password: string,
   ): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
     const user = await this.prisma.user.findUnique({ where: { email } })
-    if (!user || !user.passwordHash) throw new AuthError('INVALID_CREDENTIALS', 'Invalid credentials')
+    if (!user) throw new AuthError('INVALID_CREDENTIALS', 'Invalid credentials')
+    if (!user.passwordHash) throw new AuthError('SSO_ACCOUNT_NO_PASSWORD', 'SSO account has no password')
 
     const valid = await bcrypt.compare(password, user.passwordHash)
     if (!valid) throw new AuthError('INVALID_CREDENTIALS', 'Invalid credentials')
@@ -179,6 +181,75 @@ export class AuthService {
         gitlabToken: tokenData.access_token,
       },
     })
+
+    const familyId = randomUUID()
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, familyId)
+    await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
+
+    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
+  }
+
+  async requestPasswordReset(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } })
+    if (!user) throw new AuthError('EMAIL_NOT_FOUND', 'Aucun compte associé à cette adresse e-mail')
+    if (!user.passwordHash) throw new AuthError('SSO_ACCOUNT_RESET_NOT_ALLOWED', 'SSO account cannot reset password')
+
+    const code = String(Math.floor(100000 + Math.random() * 900000))
+    const codeHash = hashToken(code)
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000)
+
+    await this.prisma.passwordResetCode.create({
+      data: { userId: user.id, codeHash, expiresAt },
+    })
+
+    await sendPasswordResetEmail(email, code)
+  }
+
+  async verifyResetCode(email: string, code: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } })
+    if (!user) throw new AuthError('RESET_CODE_INVALID', 'Code invalide')
+
+    const record = await this.prisma.passwordResetCode.findFirst({
+      where: { userId: user.id, codeHash: hashToken(code), usedAt: null },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    if (!record) throw new AuthError('RESET_CODE_INVALID', 'Code invalide')
+    if (record.expiresAt < new Date()) throw new AuthError('RESET_CODE_EXPIRED', 'Code expiré')
+  }
+
+  async resetPassword(
+    email: string,
+    code: string,
+    newPassword: string,
+  ): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
+    const user = await this.prisma.user.findUnique({ where: { email } })
+    if (!user) throw new AuthError('RESET_CODE_INVALID', 'Code invalide')
+
+    const record = await this.prisma.passwordResetCode.findFirst({
+      where: { userId: user.id, codeHash: hashToken(code), usedAt: null },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    if (!record) throw new AuthError('RESET_CODE_INVALID', 'Code invalide')
+    if (record.expiresAt < new Date()) throw new AuthError('RESET_CODE_EXPIRED', 'Code expiré')
+
+    const passwordHash = await bcrypt.hash(newPassword, this.bcryptRounds)
+
+    await this.prisma.$transaction([
+      this.prisma.passwordResetCode.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      }),
+      this.prisma.refreshToken.updateMany({
+        where: { userId: user.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ])
 
     const familyId = randomUUID()
     const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, familyId)
