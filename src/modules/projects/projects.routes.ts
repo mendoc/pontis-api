@@ -1,5 +1,11 @@
 import { FastifyPluginAsync } from 'fastify'
 import multipart from '@fastify/multipart'
+import { pipeline } from 'node:stream/promises'
+import { createWriteStream } from 'node:fs'
+import { unlink, readFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { authenticate } from '../../middleware/authenticate'
 import { CreateProjectBody } from './projects.schemas'
 import { ProjectError, ProjectErrorCode } from './projects.errors'
@@ -32,16 +38,18 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     let name: string | undefined
     let zipBuffer: Buffer | undefined
 
-    for await (const part of parts) {
-      if (part.type === 'field' && part.fieldname === 'name') {
-        name = part.value as string
-      } else if (part.type === 'file' && part.fieldname === 'file') {
-        const chunks: Buffer[] = []
-        for await (const chunk of part.file) {
-          chunks.push(chunk)
+    const tmpPath = join(tmpdir(), `${randomUUID()}.zip`)
+    try {
+      for await (const part of parts) {
+        if (part.type === 'field' && part.fieldname === 'name') {
+          name = part.value as string
+        } else if (part.type === 'file' && part.fieldname === 'file') {
+          await pipeline(part.file, createWriteStream(tmpPath))
         }
-        zipBuffer = Buffer.concat(chunks)
       }
+      zipBuffer = await readFile(tmpPath)
+    } finally {
+      await unlink(tmpPath).catch(() => null)
     }
 
     const parsed = CreateProjectBody.safeParse({ name })
