@@ -43,7 +43,7 @@ export class AuthService {
     const user = await this.prisma.user.create({ data: { email, passwordHash } })
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
@@ -61,7 +61,7 @@ export class AuthService {
     if (!valid) throw new AuthError('INVALID_CREDENTIALS', 'Invalid credentials')
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
@@ -79,28 +79,16 @@ export class AuthService {
       where: { tokenHash: hashToken(rawToken) },
     })
 
-    if (!stored) throw new AuthError('INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token')
-
-    if (stored.revokedAt) {
-      await this.prisma.refreshToken.updateMany({
-        where: { familyId: stored.familyId },
-        data: { revokedAt: new Date() },
-      })
-      throw new AuthError('REFRESH_TOKEN_REUSE', 'Refresh token reuse detected')
+    if (!stored || stored.revokedAt) {
+      throw new AuthError('INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token')
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } })
     if (!user) throw new AuthError('USER_NOT_FOUND', 'User not found')
 
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date() },
-    })
+    const { accessToken } = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, stored.familyId)
 
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, stored.familyId)
-    await this.storeRefreshToken(user.id, stored.familyId, tokens.refreshToken)
-
-    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken }
+    return { accessToken, refreshToken: rawToken }
   }
 
   async logout(rawToken: string | undefined): Promise<void> {
@@ -170,20 +158,21 @@ export class AuthService {
     if (!profileRes.ok)
       throw new AuthError('GITLAB_PROFILE_FETCH_FAILED', 'Failed to fetch GitLab user profile')
 
-    const profile = (await profileRes.json()) as { id: number; email: string }
+    const profile = (await profileRes.json()) as { id: number; email: string; name: string }
 
     const user = await this.prisma.user.upsert({
       where: { gitlabId: profile.id },
-      update: { gitlabToken: tokenData.access_token, email: profile.email },
+      update: { gitlabToken: tokenData.access_token, email: profile.email, name: profile.name },
       create: {
         email: profile.email,
+        name: profile.name,
         gitlabId: profile.id,
         gitlabToken: tokenData.access_token,
       },
     })
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
@@ -252,7 +241,7 @@ export class AuthService {
     ])
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }

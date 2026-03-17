@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 export interface JwtPayload {
   sub: string
   email: string
+  name?: string
 }
 
 export interface RefreshPayload {

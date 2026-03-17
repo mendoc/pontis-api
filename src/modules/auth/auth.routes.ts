@@ -9,7 +9,6 @@ const HTTP_STATUS: Record<AuthErrorCode, number> = {
   INVALID_CREDENTIALS: 401,
   NO_REFRESH_TOKEN: 401,
   INVALID_REFRESH_TOKEN: 401,
-  REFRESH_TOKEN_REUSE: 401,
   USER_NOT_FOUND: 401,
   GITLAB_NOT_CONFIGURED: 503,
   GITLAB_TOKEN_EXCHANGE_FAILED: 502,
@@ -71,12 +70,11 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      const { accessToken, refreshToken } = await svc.refresh(token)
-      reply.setCookie(REFRESH_COOKIE, refreshToken, cookieOpts)
+      const { accessToken } = await svc.refresh(token)
       return reply.send({ accessToken })
     } catch (err) {
       if (err instanceof AuthError) {
-        if (err.code === 'REFRESH_TOKEN_REUSE') reply.clearCookie(REFRESH_COOKIE, { path: '/' })
+        reply.clearCookie(REFRESH_COOKIE, { path: '/' })
         return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
       }
       throw err
@@ -148,18 +146,23 @@ const authRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET /auth/gitlab/callback
   fastify.get('/gitlab/callback', async (request, reply) => {
-    const { code } = request.query as { code?: string }
+    const { code, error } = request.query as { code?: string; error?: string }
+    const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000'
+
+    if (error) {
+      return reply.redirect(`${frontendUrl}/login?error=gitlab_denied`)
+    }
+
     if (!code) {
-      return reply.status(400).send({ error: 'Missing OAuth2 code' })
+      return reply.redirect(`${frontendUrl}/login?error=gitlab_denied`)
     }
 
     try {
       const { refreshToken } = await svc.gitlabCallback(code)
       reply.setCookie(REFRESH_COOKIE, refreshToken, cookieOpts)
-      const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000'
       return reply.redirect(`${frontendUrl}/auth/callback`)
     } catch (err) {
-      if (err instanceof AuthError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      if (err instanceof AuthError) return reply.redirect(`${frontendUrl}/login?error=gitlab_failed`)
       throw err
     }
   })
