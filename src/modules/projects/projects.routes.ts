@@ -30,10 +30,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   })
 
   // POST /upload/chunk — envoyer un chunk
-  fastify.post('/upload/chunk', {
-    preHandler: authenticate,
-    config: { rawBody: false },
-  }, async (request, reply) => {
+  fastify.post('/upload/chunk', { preHandler: authenticate }, async (request, reply) => {
     const parts = request.parts()
     let uploadId: string | undefined
     let chunkIndex: string | undefined
