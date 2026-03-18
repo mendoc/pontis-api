@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from 'fastify'
 import multipart from '@fastify/multipart'
 import { pipeline } from 'node:stream/promises'
 import { createWriteStream } from 'node:fs'
-import { unlink, readFile } from 'node:fs/promises'
+import { mkdir, unlink, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -21,6 +21,95 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } })
 
   const svc = new ProjectsService(fastify.prisma, fastify.docker)
+
+  // POST /upload/init — initialiser un upload chunké
+  fastify.post('/upload/init', { preHandler: authenticate }, async (request, reply) => {
+    const uploadId = randomUUID()
+    await mkdir(join(tmpdir(), 'pontis-uploads', uploadId), { recursive: true })
+    return reply.send({ uploadId })
+  })
+
+  // POST /upload/chunk — envoyer un chunk
+  fastify.post('/upload/chunk', {
+    preHandler: authenticate,
+    config: { rawBody: false },
+  }, async (request, reply) => {
+    const parts = request.parts()
+    let uploadId: string | undefined
+    let chunkIndex: string | undefined
+
+    for await (const part of parts) {
+      if (part.type === 'field' && part.fieldname === 'uploadId') {
+        uploadId = part.value as string
+      } else if (part.type === 'field' && part.fieldname === 'chunkIndex') {
+        chunkIndex = part.value as string
+      } else if (part.type === 'file' && part.fieldname === 'chunk') {
+        if (!uploadId || !chunkIndex) {
+          // consume stream to avoid leak
+          part.file.resume()
+          continue
+        }
+        const chunkPath = join(tmpdir(), 'pontis-uploads', uploadId, chunkIndex)
+        await pipeline(part.file, createWriteStream(chunkPath))
+      }
+    }
+
+    if (!uploadId || !chunkIndex) {
+      return reply.status(400).send({ error: 'uploadId et chunkIndex requis' })
+    }
+
+    return reply.send({ ok: true })
+  })
+
+  // POST /upload/finalize — assembler les chunks et créer le projet
+  fastify.post('/upload/finalize', { preHandler: authenticate }, async (request, reply) => {
+    const { name, uploadId, totalChunks } = request.body as {
+      name: string
+      uploadId: string
+      totalChunks: number
+    }
+
+    if (!name || !uploadId || !totalChunks) {
+      return reply.status(400).send({ error: 'name, uploadId et totalChunks requis' })
+    }
+
+    const uploadDir = join(tmpdir(), 'pontis-uploads', uploadId)
+    let zipBuffer: Buffer
+
+    try {
+      const chunks: Buffer[] = []
+      for (let i = 0; i < totalChunks; i++) {
+        const chunkPath = join(uploadDir, String(i))
+        chunks.push(await readFile(chunkPath))
+      }
+      zipBuffer = Buffer.concat(chunks)
+    } finally {
+      await rm(uploadDir, { recursive: true, force: true })
+    }
+
+    if (!zipBuffer || zipBuffer.length === 0) {
+      return reply.status(400).send({ error: 'Fichier ZIP requis' })
+    }
+
+    const parsed = CreateProjectBody.safeParse({ name })
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() })
+    }
+
+    try {
+      const project = await svc.createProject(request.user.sub, parsed.data.name, zipBuffer)
+      return reply.status(201).send({
+        id: project.id,
+        name: project.name,
+        slug: project.slug,
+        status: project.status,
+        domain: project.domain ?? null,
+      })
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
 
   // GET /check-slug?slug= — vérifier la disponibilité d'un slug
   fastify.get('/check-slug', { preHandler: authenticate }, async (request, reply) => {
