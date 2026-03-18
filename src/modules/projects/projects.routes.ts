@@ -260,6 +260,18 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   })
 
+  // DELETE /:id — supprimer un projet
+  fastify.delete('/:id', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      await svc.deleteProject(request.user.sub, id)
+      return reply.status(204).send()
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
   // GET /:id — détail d'un projet (pour polling)
   fastify.get('/:id', { preHandler: authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }

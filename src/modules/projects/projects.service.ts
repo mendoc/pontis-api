@@ -162,4 +162,22 @@ export class ProjectsService {
       select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
     })
   }
+
+  async deleteProject(userId: string, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+
+    try {
+      const container = this.docker.getContainer(`pontis-${project.slug}`)
+      await container.stop().catch(() => null)
+      await container.remove().catch(() => null)
+    } catch { /* ignore */ }
+
+    try {
+      const image = this.docker.getImage(`pontis-${project.slug}:latest`)
+      await image.remove({ force: true }).catch(() => null)
+    } catch { /* ignore */ }
+
+    await this.prisma.project.delete({ where: { id: projectId } })
+  }
 }
