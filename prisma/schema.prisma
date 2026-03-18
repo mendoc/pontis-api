@@ -58,6 +58,7 @@ model Project {
   type        ProjectType
   domain      String?
   status      String       @default("inactive")
+  createdAt   DateTime     @default(now())
   user        User         @relation(fields: [userId], references: [id])
   deployments Deployment[]
   envVars     EnvVar[]

@@ -61,14 +61,14 @@ export class ProjectsService {
     return this.prisma.project.findMany({
       where: { userId },
       orderBy: { name: 'asc' },
-      select: { id: true, name: true, slug: true, status: true, domain: true },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
     })
   }
 
   async getProject(userId: string, projectId: string) {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, userId },
-      select: { id: true, name: true, slug: true, status: true, domain: true },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
     })
 
     if (!project) {
@@ -76,5 +76,70 @@ export class ProjectsService {
     }
 
     return project
+  }
+
+  async startProject(userId: string, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+
+    try {
+      const container = this.docker.getContainer(`pontis-${project.slug}`)
+      await container.start()
+    } catch {
+      // Container inexistant ou déjà démarré
+    }
+
+    return this.prisma.project.update({
+      where: { id: projectId },
+      data: { status: 'running' },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+    })
+  }
+
+  async stopProject(userId: string, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+
+    try {
+      const container = this.docker.getContainer(`pontis-${project.slug}`)
+      await container.stop()
+    } catch {
+      // Container déjà arrêté ou inexistant
+    }
+
+    return this.prisma.project.update({
+      where: { id: projectId },
+      data: { status: 'stopped' },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+    })
+  }
+
+  async restartProject(userId: string, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+
+    try {
+      const container = this.docker.getContainer(`pontis-${project.slug}`)
+      await container.restart()
+    } catch {
+      // Container inexistant ou erreur Docker
+    }
+
+    return this.prisma.project.update({
+      where: { id: projectId },
+      data: { status: 'running' },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+    })
+  }
+
+  async renameProject(userId: string, projectId: string, name: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+
+    return this.prisma.project.update({
+      where: { id: projectId },
+      data: { name },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+    })
   }
 }

@@ -171,6 +171,60 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send(projects)
   })
 
+  // POST /:id/start — démarrer un projet
+  fastify.post('/:id/start', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      const project = await svc.startProject(request.user.sub, id)
+      return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // POST /:id/stop — stopper un projet
+  fastify.post('/:id/stop', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      const project = await svc.stopProject(request.user.sub, id)
+      return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // POST /:id/restart — redémarrer un projet
+  fastify.post('/:id/restart', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      const project = await svc.restartProject(request.user.sub, id)
+      return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // PATCH /:id — renommer un projet
+  fastify.patch('/:id', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const { name } = request.body as { name?: string }
+
+    if (!name || typeof name !== 'string' || name.trim().length < 1) {
+      return reply.status(400).send({ error: 'Nom invalide' })
+    }
+
+    try {
+      const project = await svc.renameProject(request.user.sub, id, name.trim())
+      return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
   // GET /:id — détail d'un projet (pour polling)
   fastify.get('/:id', { preHandler: authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }
