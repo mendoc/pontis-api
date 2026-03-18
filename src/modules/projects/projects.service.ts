@@ -132,6 +132,26 @@ export class ProjectsService {
     })
   }
 
+  async redeployProject(userId: string, projectId: string, zipBuffer: Buffer) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+
+    await this.prisma.project.update({ where: { id: projectId }, data: { status: 'building' } })
+
+    buildAndRunStaticProject(this.docker, project.id, project.slug, zipBuffer)
+      .then(async () => {
+        await this.prisma.project.update({ where: { id: projectId }, data: { status: 'running' } })
+      })
+      .catch(async () => {
+        await this.prisma.project.update({ where: { id: projectId }, data: { status: 'failed' } })
+      })
+
+    return this.prisma.project.findFirst({
+      where: { id: projectId },
+      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+    })
+  }
+
   async renameProject(userId: string, projectId: string, name: string) {
     const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')

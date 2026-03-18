@@ -108,6 +108,44 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   })
 
+  // POST /upload/redeploy — assembler les chunks et redéployer un projet existant
+  fastify.post('/upload/redeploy', { preHandler: authenticate }, async (request, reply) => {
+    const { projectId, uploadId, totalChunks } = request.body as {
+      projectId: string
+      uploadId: string
+      totalChunks: number
+    }
+
+    if (!projectId || !uploadId || !totalChunks) {
+      return reply.status(400).send({ error: 'projectId, uploadId et totalChunks requis' })
+    }
+
+    const uploadDir = join(tmpdir(), 'pontis-uploads', uploadId)
+    let zipBuffer: Buffer
+
+    try {
+      const chunks: Buffer[] = []
+      for (let i = 0; i < totalChunks; i++) {
+        chunks.push(await readFile(join(uploadDir, String(i))))
+      }
+      zipBuffer = Buffer.concat(chunks)
+    } finally {
+      await rm(uploadDir, { recursive: true, force: true })
+    }
+
+    if (!zipBuffer || zipBuffer.length === 0) {
+      return reply.status(400).send({ error: 'Fichier ZIP requis' })
+    }
+
+    try {
+      const project = await svc.redeployProject(request.user.sub, projectId, zipBuffer)
+      return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
   // GET /check-slug?slug= — vérifier la disponibilité d'un slug
   fastify.get('/check-slug', { preHandler: authenticate }, async (request, reply) => {
     const { slug } = request.query as { slug?: string }
