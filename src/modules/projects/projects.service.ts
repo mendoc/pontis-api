@@ -69,9 +69,13 @@ export class ProjectsService {
     return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
   }
 
-  async listProjects(userId: string, opts: { page?: number; limit?: number; search?: string } = {}) {
+  private static readonly SORTABLE_FIELDS = ['name', 'domain', 'status', 'type', 'createdAt'] as const
+
+  async listProjects(userId: string, opts: { page?: number; limit?: number; search?: string; sortBy?: string; sortOrder?: 'asc' | 'desc' } = {}) {
     const page = Math.max(1, opts.page ?? 1)
     const limit = Math.min(100, Math.max(1, opts.limit ?? 10))
+    const sortField = ProjectsService.SORTABLE_FIELDS.includes(opts.sortBy as never) ? opts.sortBy! : 'createdAt'
+    const sortOrder = opts.sortOrder === 'asc' ? 'asc' : 'desc'
     const search = opts.search?.trim()
 
     // Résout un éventuel label français vers la valeur brute du statut
@@ -97,7 +101,7 @@ export class ProjectsService {
     const select = { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true }
 
     const [data, total] = await this.prisma.$transaction([
-      this.prisma.project.findMany({ where, orderBy: { name: 'asc' }, select, skip: (page - 1) * limit, take: limit }),
+      this.prisma.project.findMany({ where, orderBy: { [sortField]: sortOrder }, select, skip: (page - 1) * limit, take: limit }),
       this.prisma.project.count({ where }),
     ])
 
