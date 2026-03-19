@@ -202,8 +202,13 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
 
   // GET / — liste des projets de l'utilisateur
   fastify.get('/', { preHandler: authenticate }, async (request, reply) => {
-    const projects = await svc.listProjects(request.user.sub)
-    return reply.send(projects)
+    const { page, limit, search } = request.query as { page?: string; limit?: string; search?: string }
+    const result = await svc.listProjects(request.user.sub, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      search,
+    })
+    return reply.send(result)
   })
 
   // POST /:id/start — démarrer un projet

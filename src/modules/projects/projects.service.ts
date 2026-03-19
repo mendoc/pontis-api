@@ -57,18 +57,57 @@ export class ProjectsService {
     return project
   }
 
-  async listProjects(userId: string) {
-    return this.prisma.project.findMany({
-      where: { userId },
-      orderBy: { name: 'asc' },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
-    })
+  // Labels français → valeurs brutes stockées en base
+  private static readonly STATUS_FR: Array<[string, string]> = [
+    ['en ligne', 'running'],
+    ['en cours', 'building'],
+    ['arrete',   'stopped'],
+    ['echoue',   'failed'],
+  ]
+
+  private normalizeStr(s: string): string {
+    return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  }
+
+  async listProjects(userId: string, opts: { page?: number; limit?: number; search?: string } = {}) {
+    const page = Math.max(1, opts.page ?? 1)
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 10))
+    const search = opts.search?.trim()
+
+    // Résout un éventuel label français vers la valeur brute du statut
+    const normalizedSearch = search ? this.normalizeStr(search) : ''
+    const resolvedStatus = normalizedSearch
+      ? ProjectsService.STATUS_FR.find(([label]) => label.includes(normalizedSearch))?.[1]
+      : undefined
+
+    const where = {
+      userId,
+      ...(search ? {
+        OR: [
+          { name:   { contains: search, mode: 'insensitive' as const } },
+          { slug:   { contains: search, mode: 'insensitive' as const } },
+          { domain: { contains: search, mode: 'insensitive' as const } },
+          { type:   { contains: search, mode: 'insensitive' as const } },
+          { status: { contains: search, mode: 'insensitive' as const } },
+          ...(resolvedStatus ? [{ status: { equals: resolvedStatus } }] : []),
+        ],
+      } : {}),
+    }
+
+    const select = { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true }
+
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.project.findMany({ where, orderBy: { name: 'asc' }, select, skip: (page - 1) * limit, take: limit }),
+      this.prisma.project.count({ where }),
+    ])
+
+    return { data, total, page, limit }
   }
 
   async getProject(userId: string, projectId: string) {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, userId },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
     })
 
     if (!project) {
@@ -92,7 +131,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { status: 'running' },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
     })
   }
 
@@ -110,7 +149,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { status: 'stopped' },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
     })
   }
 
@@ -128,7 +167,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { status: 'running' },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
     })
   }
 
@@ -148,7 +187,7 @@ export class ProjectsService {
 
     return this.prisma.project.findFirst({
       where: { id: projectId },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
     })
   }
 
@@ -159,7 +198,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { name },
-      select: { id: true, name: true, slug: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
     })
   }
 
