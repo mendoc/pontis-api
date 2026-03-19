@@ -84,6 +84,13 @@ export class ProjectsService {
       ? ProjectsService.STATUS_FR.find(([label]) => label.includes(normalizedSearch))?.[1]
       : undefined
 
+    // type est une enum (git | static) — on ne peut pas utiliser contains
+    const PROJECT_TYPES = ['git', 'static'] as const
+    type ProjectTypeVal = typeof PROJECT_TYPES[number]
+    const matchedType = search
+      ? PROJECT_TYPES.find((t) => t.includes(search.toLowerCase())) as ProjectTypeVal | undefined
+      : undefined
+
     const where = {
       userId,
       ...(search ? {
@@ -91,9 +98,9 @@ export class ProjectsService {
           { name:   { contains: search, mode: 'insensitive' as const } },
           { slug:   { contains: search, mode: 'insensitive' as const } },
           { domain: { contains: search, mode: 'insensitive' as const } },
-          { type:   { contains: search, mode: 'insensitive' as const } },
           { status: { contains: search, mode: 'insensitive' as const } },
           ...(resolvedStatus ? [{ status: { equals: resolvedStatus } }] : []),
+          ...(matchedType   ? [{ type:   { equals: matchedType   } }] : []),
         ],
       } : {}),
     }
