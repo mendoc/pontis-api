@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pontis is a self-hosted PaaS (Platform as a Service) — a Netlify/Vercel/Heroku alternative. This repository (`github.com/mendoc/pontis-api`) is the standalone Fastify backend API (Node.js 20), port 3001.
 
-**Current status:** Phase 2 (authentication) is complete. Phase 3 (Static Sites) is next.
+**Current status:** Phase 3 (Static Sites) is partially complete — project CRUD + ZIP upload + Nginx container deployment are implemented. Blue/green and GitLab pipeline are next.
 
 ## Development Commands
 
@@ -17,7 +17,13 @@ All commands run from this directory (`/api`).
 docker compose -f docker-compose.dev.yml up postgres redis -d
 ```
 
-**Start full dev stack (deps + API container with hot-reload):**
+**Start full dev stack avec hot-reload automatique (recommandé) :**
+```bash
+docker compose -f docker-compose.dev.yml watch
+```
+`watch` synchronise `src/` dans le container à chaque modification (ts-node-dev redémarre seul) et rebuild l'image si `package.json`, `package-lock.json` ou `Dockerfile.dev` changent. C'est la commande à utiliser en développement — évite de devoir rebuild manuellement.
+
+**Démarrer sans watch (pas de hot-rebuild sur package.json) :**
 ```bash
 docker compose -f docker-compose.dev.yml up -d
 ```
@@ -59,11 +65,20 @@ All routes are mounted under the `/api/v1` prefix.
 - **`index.ts`** — entry point; binds to `0.0.0.0:3001`
 - **`plugins/jwt.ts`** — RS256 access tokens (15 min) via `jsonwebtoken`; HS256 refresh tokens (7 days) stored as httpOnly `refresh_token` cookie; auto-generates ephemeral RSA keypair in dev
 - **`plugins/prisma.ts`** — singleton PrismaClient decorated onto Fastify instance as `fastify.prisma`
+- **`plugins/docker.ts`** — Dockerode instance decorated onto Fastify as `fastify.docker`; connects via `/var/run/docker.sock`
 - **`modules/auth/`** — auth module:
   - `auth.routes.ts` — register, login, refresh, logout, GitLab OAuth2 (`/auth/gitlab` + callback)
   - `auth.service.ts` — `AuthService` class; depends on `JwtOperations` interface (injected from jwt plugin)
   - `auth.schemas.ts` — Zod schemas for request bodies
   - `auth.errors.ts` — `AuthError` class with typed `AuthErrorCode` enum mapped to HTTP status codes
+- **`modules/projects/`** — projects module (Phase 3):
+  - `projects.routes.ts` — `GET /check-slug`, `POST /` (multipart ZIP upload, 50 MB limit), `GET /`, `GET /:id`, `PATCH /:id` (rename), `DELETE /:id`, `POST /:id/start|stop|restart`, `POST /upload/init|chunk|finalize|redeploy`; routes de debug (dev) : `GET|POST /:id/debug/container-inspect|stop|remove|create|start`; all protected by `authenticate`
+  - `projects.service.ts` — `ProjectsService` class; `createProject` fires `buildAndRunStaticProject` as a fire-and-forget async operation; `restartProject` fait stop → remove → createContainer → start (recrée un nouveau container depuis l'image existante, met à jour `restartedAt`); `deleteProject` stops/removes the Docker container + image then calls `prisma.project.delete` (cascade: Deployment, EnvVar, Port)
+  - `projects.schemas.ts` — Zod schemas for project bodies
+  - `projects.errors.ts` — `ProjectError` with `ProjectErrorCode` enum
+- **`lib/static-builder.ts`** — core deployment logic: extract ZIP → normalize directory structure (handles macOS `__MACOSX` artifacts and single-subdirectory ZIPs) → build `nginx:alpine` Docker image → create & start container with Traefik labels for HTTPS routing. Uses env vars `APP_DOMAIN` (default `app.ongoua.pro`) and `DOCKER_NETWORK` (default `pontis_network`).
+- **`lib/mailer.ts`** — email via Resend (production) or local SMTP (dev)
+- **`lib/hash.ts`** — bcrypt helpers
 - **`middleware/authenticate.ts`** — Bearer token extractor; decorate protected routes with `{ preHandler: [authenticate] }`
 - **`config/cookies.ts`** — shared cookie name (`REFRESH_COOKIE`) and options (`cookieOpts`)
 
@@ -74,7 +89,7 @@ All routes are mounted under the `/api/v1` prefix.
 - Calls `buildApp({ prismaOverride })` with a mock or real Prisma client
 - Returns a fully-initialized Fastify instance (no real network binding needed — use `app.inject()`)
 
-**`src/__tests__/helpers/prisma.ts`** exports `makeMockPrisma(methods?)` — builds a typed partial mock of PrismaClient. Only `user` and `refreshToken` models are mocked; extend as new modules are added.
+**`src/__tests__/helpers/prisma.ts`** exports `makeMockPrisma(methods?)` — builds a typed partial mock of PrismaClient. Only `user` and `refreshToken` models are mocked; extend with `project` (and others) as new modules are added.
 
 Pattern for route tests: use `app.inject()`, never start a real server. Pattern for service tests: instantiate `AuthService` directly with a mock Prisma and mock `JwtOperations`.
 
@@ -84,7 +99,7 @@ Pattern for route tests: use `app.inject()`, never start a real server. Pattern 
 |---|---|
 | `users` | id (uuid), email (unique), passwordHash?, gitlabId?, gitlabToken?, createdAt |
 | `refresh_tokens` | id, userId, familyId, tokenHash (unique), expiresAt, revokedAt? |
-| `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, port? |
+| `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, restartedAt?, createdAt, port? |
 | `deployments` | id, projectId, commitSha?, status (pending\|building\|success\|failed), logs? |
 | `env_vars` | id, projectId, key, valueEncrypted |
 | `ports` | id, portNumber (unique), projectId (unique), allocatedAt |
@@ -116,7 +131,7 @@ projet-slug/
 
 - **Phase 1 — Infrastructure** ✅
 - **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2
-- **Phase 3 — Static Sites** — project CRUD, file upload, Nginx container per project
+- **Phase 3 — Static Sites** ⚙️ In progress — project CRUD, file upload, Nginx container deployment done; blue/green pending
 - **Phase 4 — GitLab Build Pipeline** — Nixpacks, blue/green, real-time WebSocket logs
 - **Phase 5 — Auto CI/CD** — GitLab push webhooks, BullMQ async jobs
 - **Phase 6 — Observability** — container logs/metrics, rollback

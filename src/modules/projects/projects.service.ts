@@ -118,7 +118,7 @@ export class ProjectsService {
   async getProject(userId: string, projectId: string) {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, userId },
-      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true, restartedAt: true },
     })
 
     if (!project) {
@@ -142,7 +142,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { status: 'running' },
-      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true, restartedAt: true },
     })
   }
 
@@ -160,7 +160,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { status: 'stopped' },
-      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true, restartedAt: true },
     })
   }
 
@@ -168,18 +168,100 @@ export class ProjectsService {
     const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
+    const containerName = `pontis-${project.slug}`
+    const imageTag     = `pontis-${project.slug}:latest`
+    const domain       = project.domain ?? `${project.slug}.${process.env.APP_DOMAIN ?? 'app.ongoua.pro'}`
+    const network      = process.env.DOCKER_NETWORK ?? 'pontis_network'
+    const slug         = project.slug
+
+    // 1. Arrêter et supprimer le container existant
     try {
-      const container = this.docker.getContainer(`pontis-${project.slug}`)
-      await container.restart()
+      const old = this.docker.getContainer(containerName)
+      await old.stop()
+      await old.remove()
     } catch {
-      // Container inexistant ou erreur Docker
+      // Container déjà arrêté ou inexistant
     }
+
+    // 2. Créer un nouveau container depuis l'image existante et le démarrer
+    const container = await this.docker.createContainer({
+      Image: imageTag,
+      name: containerName,
+      Labels: {
+        'traefik.enable': 'true',
+        [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
+        [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
+        [`traefik.http.routers.${slug}.tls`]: 'true',
+        [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
+        [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
+      },
+      HostConfig: { NetworkMode: network },
+    })
+    await container.start()
 
     return this.prisma.project.update({
       where: { id: projectId },
-      data: { status: 'running' },
-      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
+      data: { status: 'running', restartedAt: new Date() },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true, restartedAt: true },
     })
+  }
+
+  // --- Méthodes de debug step-by-step ---
+
+  private async getProjectContainer(userId: string, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+    return { project, containerName: `pontis-${project.slug}`, imageTag: `pontis-${project.slug}:latest` }
+  }
+
+  async debugContainerStop(userId: string, projectId: string) {
+    const { containerName } = await this.getProjectContainer(userId, projectId)
+    const c = this.docker.getContainer(containerName)
+    await c.stop()
+    const info = await c.inspect()
+    return { step: 'stop', containerName, id: info.Id.slice(0, 12), status: info.State.Status }
+  }
+
+  async debugContainerRemove(userId: string, projectId: string) {
+    const { containerName } = await this.getProjectContainer(userId, projectId)
+    const c = this.docker.getContainer(containerName)
+    await c.remove()
+    return { step: 'remove', containerName, removed: true }
+  }
+
+  async debugContainerCreate(userId: string, projectId: string) {
+    const { project, containerName, imageTag } = await this.getProjectContainer(userId, projectId)
+    const slug = project.slug
+    const domain = project.domain ?? `${slug}.${process.env.APP_DOMAIN ?? 'app.ongoua.pro'}`
+    const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
+    const container = await this.docker.createContainer({
+      Image: imageTag,
+      name: containerName,
+      Labels: {
+        'traefik.enable': 'true',
+        [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
+        [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
+        [`traefik.http.routers.${slug}.tls`]: 'true',
+        [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
+        [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
+      },
+      HostConfig: { NetworkMode: network },
+    })
+    return { step: 'create', containerName, newId: container.id.slice(0, 12) }
+  }
+
+  async debugContainerStart(userId: string, projectId: string) {
+    const { containerName } = await this.getProjectContainer(userId, projectId)
+    const c = this.docker.getContainer(containerName)
+    await c.start()
+    const info = await c.inspect()
+    return { step: 'start', containerName, id: info.Id.slice(0, 12), status: info.State.Status }
+  }
+
+  async debugContainerInspect(userId: string, projectId: string) {
+    const { containerName } = await this.getProjectContainer(userId, projectId)
+    const info = await this.docker.getContainer(containerName).inspect()
+    return { containerName, id: info.Id.slice(0, 12), status: info.State.Status, created: info.Created }
   }
 
   async redeployProject(userId: string, projectId: string, zipBuffer: Buffer) {
@@ -198,7 +280,7 @@ export class ProjectsService {
 
     return this.prisma.project.findFirst({
       where: { id: projectId },
-      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true, restartedAt: true },
     })
   }
 
@@ -209,7 +291,7 @@ export class ProjectsService {
     return this.prisma.project.update({
       where: { id: projectId },
       data: { name },
-      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true },
+      select: { id: true, name: true, slug: true, type: true, status: true, domain: true, createdAt: true, restartedAt: true },
     })
   }
 

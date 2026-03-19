@@ -249,6 +249,43 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     }
   })
 
+  // --- Routes de debug (step-by-step) ---
+
+  // POST /:id/debug/container-stop
+  fastify.post('/:id/debug/container-stop', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const result = await svc.debugContainerStop(request.user.sub, id)
+    return reply.send(result)
+  })
+
+  // POST /:id/debug/container-remove
+  fastify.post('/:id/debug/container-remove', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const result = await svc.debugContainerRemove(request.user.sub, id)
+    return reply.send(result)
+  })
+
+  // POST /:id/debug/container-create
+  fastify.post('/:id/debug/container-create', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const result = await svc.debugContainerCreate(request.user.sub, id)
+    return reply.send(result)
+  })
+
+  // POST /:id/debug/container-start
+  fastify.post('/:id/debug/container-start', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const result = await svc.debugContainerStart(request.user.sub, id)
+    return reply.send(result)
+  })
+
+  // GET /:id/debug/container-inspect
+  fastify.get('/:id/debug/container-inspect', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const result = await svc.debugContainerInspect(request.user.sub, id)
+    return reply.send(result)
+  })
+
   // PATCH /:id — renommer un projet
   fastify.patch('/:id', { preHandler: authenticate }, async (request, reply) => {
     const { id } = request.params as { id: string }
