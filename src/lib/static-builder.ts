@@ -150,7 +150,7 @@ export async function buildAndRunStaticProject(
     })
 
     await container.start()
-    await writeProjectCompose(slug, domain, DOCKER_NETWORK)
+    await writeProjectCompose(slug, domain, DOCKER_NETWORK, versionedTag)
 
     return { domain, logs }
   } finally {

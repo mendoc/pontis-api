@@ -3,12 +3,12 @@ import fs from 'node:fs/promises'
 
 export const PROJECTS_DIR = process.env.PROJECTS_DIR ?? '/var/lib/pontis/projects'
 
-export function generateComposeContent(slug: string, domain: string, network: string): string {
+export function generateComposeContent(slug: string, domain: string, network: string, imageTag: string): string {
   return `version: "3.8"
 
 services:
   app:
-    image: pontis-${slug}:latest
+    image: ${imageTag}
     container_name: pontis-${slug}
     restart: unless-stopped
     networks:
@@ -27,10 +27,10 @@ networks:
 `
 }
 
-export async function writeProjectCompose(slug: string, domain: string, network: string): Promise<void> {
+export async function writeProjectCompose(slug: string, domain: string, network: string, imageTag: string): Promise<void> {
   const projectDir = path.join(PROJECTS_DIR, slug)
   await fs.mkdir(projectDir, { recursive: true })
-  await fs.writeFile(path.join(projectDir, 'docker-compose.yml'), generateComposeContent(slug, domain, network), 'utf-8')
+  await fs.writeFile(path.join(projectDir, 'docker-compose.yml'), generateComposeContent(slug, domain, network, imageTag), 'utf-8')
 }
 
 export async function removeProjectDir(slug: string): Promise<void> {

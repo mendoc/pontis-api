@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pontis is a self-hosted PaaS (Platform as a Service) — a Netlify/Vercel/Heroku alternative. This repository (`github.com/mendoc/pontis-api`) is the standalone Fastify backend API (Node.js 20), port 3001.
 
-**Current status:** Phase 3 (Static Sites) is partially complete — project CRUD + ZIP upload + Nginx container deployment are implemented. Blue/green and GitLab pipeline are next.
+**Current status:** Phase 3 (Static Sites) is largely complete — project CRUD, ZIP upload, Nginx container deployment, versioned deployments, rollback, and persistent compose files are implemented. Blue/green and GitLab pipeline are next.
 
 ## Development Commands
 
@@ -28,6 +28,12 @@ docker compose -f docker-compose.dev.yml watch
 ```bash
 docker compose -f docker-compose.dev.yml up -d
 ```
+
+**Rebuild de l'image dev (après mise à jour du code ou de package.json) :**
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+Le `Dockerfile.dev` copie `node_modules/` depuis l'hôte et exécute `npm rebuild` pour recompiler les modules natifs (bcrypt, etc.) pour la plateforme glibc du container. Si le volume `api_api_node_modules` est corrompu ou obsolète, le supprimer avec `docker volume rm api_api_node_modules` avant de relancer.
 
 **API dev locally (hot-reload via ts-node-dev, loads .env):**
 ```bash
@@ -73,11 +79,12 @@ All routes are mounted under the `/api/v1` prefix.
   - `auth.schemas.ts` — Zod schemas for request bodies (incl. `ForgotPasswordBody`, `VerifyResetCodeBody`, `ResetPasswordBody`)
   - `auth.errors.ts` — `AuthError` class with `AuthErrorCode` enum (incl. `EMAIL_NOT_FOUND`, `RESET_CODE_INVALID`, `RESET_CODE_EXPIRED`, `SSO_ACCOUNT_RESET_NOT_ALLOWED`)
 - **`modules/projects/`** — projects module (Phase 3):
-  - `projects.routes.ts` — `GET /check-slug`, `POST /` (multipart ZIP upload, 50 MB limit), `GET /`, `GET /:id`, `PATCH /:id` (rename), `DELETE /:id`, `POST /:id/start|stop|restart`, `POST /upload/init|chunk|finalize|redeploy`; routes de debug (dev) : `GET|POST /:id/debug/container-inspect|stop|remove|create|start`; all protected by `authenticate`
-  - `projects.service.ts` — `ProjectsService` class; `createProject` et `redeployProject` (redéploiement avec nouveau ZIP) fires `buildAndRunStaticProject` as fire-and-forget; `restartProject` fait stop → remove → createContainer → start (recrée depuis l'image existante, met à jour `restartedAt`); `listProjects` supporte pagination (`page`/`limit`), recherche avec normalisation des accents, tri (`sortBy`: name|domain|status|type|createdAt, `sortOrder`: asc|desc); `deleteProject` stops/removes the Docker container + image then calls `prisma.project.delete` (cascade: Deployment, EnvVar, Port)
+  - `projects.routes.ts` — `GET /check-slug`, `POST /` (multipart ZIP upload, 50 MB limit), `GET /`, `GET /:id`, `PATCH /:id` (rename), `DELETE /:id`, `POST /:id/start|stop|restart`, `POST /upload/init|chunk|finalize|redeploy`, `GET|DELETE /:id/deployments`, `GET /:id/deployments/:deploymentId`, `POST /:id/deployments/:deploymentId/rollback`; routes de debug (dev) : `GET|POST /:id/debug/container-inspect|stop|remove|create|start`; all protected by `authenticate`
+  - `projects.service.ts` — `ProjectsService` class; `createProject` et `redeployProject` créent un `Deployment` (status `building`) et lancent `buildAndRunStaticProject` en fire-and-forget; à la réussite, l'image est taguée `:deploy-{deploymentId}` (imageTag) et `currentDeploymentId` est mis à jour; `rollbackDeployment` recrée le container depuis l'imageTag du déploiement cible; `listProjects` inclut `lastDeployedAt` (dernier déploiement); `deleteProject` supprime toutes les images versionnées (`pontis-{slug}:*`); `restartProject` utilise `remove({ force: true })` puis recrée depuis `:latest`; `listProjects` supporte pagination, recherche avec normalisation des accents, tri
   - `projects.schemas.ts` — Zod schemas for project bodies
-  - `projects.errors.ts` — `ProjectError` with `ProjectErrorCode` enum
-- **`lib/static-builder.ts`** — core deployment logic: extract ZIP → normalize directory structure (handles macOS `__MACOSX` artifacts and single-subdirectory ZIPs) → build `nginx:alpine` Docker image → create & start container with Traefik labels for HTTPS routing. Uses env vars `APP_DOMAIN` (default `app.ongoua.pro`) and `DOCKER_NETWORK` (default `pontis_network`).
+  - `projects.errors.ts` — `ProjectError` with `ProjectErrorCode` enum (incl. `DEPLOYMENT_NOT_FOUND`, `DEPLOYMENT_IN_USE`, `DEPLOYMENT_BUILDING`)
+- **`lib/static-builder.ts`** — core deployment logic: extract ZIP → normalize directory structure (handles macOS `__MACOSX` artifacts and single-subdirectory ZIPs) → build `nginx:alpine` Docker image (tagged `:latest` + `:deploy-{deploymentId}`) → create & start container with Traefik labels → write `docker-compose.yml` via `compose-writer`. Captures timestamped build logs. Uses env vars `APP_DOMAIN` (default `app.ongoua.pro`) and `DOCKER_NETWORK` (default `pontis_network`).
+- **`lib/compose-writer.ts`** — writes `${PROJECTS_DIR}/${slug}/docker-compose.yml` after each successful deployment; `removeProjectDir` called on project deletion. `PROJECTS_DIR` defaults to `/var/lib/pontis/projects` (must be bind-mounted in the API container).
 - **`lib/mailer.ts`** — email via nodemailer; `sendPasswordResetEmail()` envoie un code 6 chiffres valable 15 min; en dev pointe vers Mailpit (SMTP localhost:1025)
 - **`lib/hash.ts`** — bcrypt helpers
 - **`middleware/authenticate.ts`** — Bearer token extractor; decorate protected routes with `{ preHandler: [authenticate] }`
@@ -101,8 +108,8 @@ Pattern for route tests: use `app.inject()`, never start a real server. Pattern 
 | `users` | id (uuid), email (unique), name?, passwordHash?, gitlabId?, gitlabToken?, createdAt |
 | `refresh_tokens` | id, userId, familyId, tokenHash (unique), expiresAt, revokedAt? |
 | `password_reset_codes` | id, userId, codeHash, expiresAt, usedAt?, createdAt |
-| `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, restartedAt?, createdAt, port? |
-| `deployments` | id, projectId, commitSha?, status (pending\|building\|success\|failed), logs? |
+| `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, restartedAt?, currentDeploymentId?, createdAt, port? |
+| `deployments` | id, projectId, commitSha?, status (pending\|building\|success\|failed), logs?, imageTag?, createdAt, finishedAt? |
 | `env_vars` | id, projectId, key, valueEncrypted |
 | `ports` | id, portNumber (unique), projectId (unique), allocatedAt |
 
@@ -112,15 +119,16 @@ Refresh tokens use a **token family** pattern: reusing a revoked token revokes a
 
 All services share a single Docker bridge network `pontis_network`. Traefik is the only component exposed to the internet; it routes to containers via Docker labels. `exposedByDefault: false` — only containers with `traefik.enable=true` are routed.
 
-**Deployed app pattern** (generated per project by the worker):
+**Deployed app pattern** — après chaque déploiement réussi, `compose-writer` crée :
 ```
-projet-slug/
-├── docker-compose.yml   # service always named "app", Traefik labels carry the slug
-├── Dockerfile
-└── server.js
+${PROJECTS_DIR}/${slug}/
+└── docker-compose.yml   # service "app", Traefik labels, réseau externe pontis_network
 ```
+Le volume `${PROJECTS_DIR}:${PROJECTS_DIR}` est bind-monté symétrique dans le container API (voir `docker-compose.dev.yml`).
 
-**Blue/green deployment:** start new container → poll `/health` for HTTP 200 (30s timeout) → switch Traefik labels → stop old container. On timeout: rollback, mark deployment `failed`.
+**Versioning des images** — chaque déploiement réussi crée deux tags : `pontis-{slug}:latest` (courant) et `pontis-{slug}:deploy-{deploymentId}` (archivé, stocké dans `deployment.imageTag`). Le rollback recrée le container depuis l'imageTag archivé.
+
+**Blue/green deployment (à implémenter):** start new container → poll `/health` for HTTP 200 (30s timeout) → switch Traefik labels → stop old container. On timeout: rollback, mark deployment `failed`.
 
 ## Security Invariants
 
@@ -133,7 +141,7 @@ projet-slug/
 
 - **Phase 1 — Infrastructure** ✅
 - **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2 + password reset flow
-- **Phase 3 — Static Sites** ⚙️ In progress — project CRUD, chunked ZIP upload, Nginx container deployment, redeploy done; blue/green pending
+- **Phase 3 — Static Sites** ⚙️ Largely done — project CRUD, chunked ZIP upload, Nginx deployment, versioned deployments (imageTag), rollback, persistent compose files; blue/green pending
 - **Phase 4 — GitLab Build Pipeline** — Nixpacks, blue/green, real-time WebSocket logs
 - **Phase 5 — Auto CI/CD** — GitLab push webhooks, BullMQ async jobs
 - **Phase 6 — Observability** — container logs/metrics, rollback

@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import Dockerode from 'dockerode'
 import { ProjectError } from './projects.errors'
 import { buildAndRunStaticProject } from '../../lib/static-builder'
-import { removeProjectDir } from '../../lib/compose-writer'
+import { removeProjectDir, writeProjectCompose } from '../../lib/compose-writer'
 
 function slugify(name: string): string {
   return name
@@ -368,6 +368,7 @@ export class ProjectsService {
         HostConfig: { NetworkMode: network },
       })
       await container.start()
+      await writeProjectCompose(slug, domain, network, deployment.imageTag).catch(() => null)
     } catch (err) {
       throw new ProjectError('BUILD_FAILED', `Impossible de restaurer le container : ${dockerErrorMessage(err)}`)
     }

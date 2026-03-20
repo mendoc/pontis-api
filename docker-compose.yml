@@ -54,6 +54,7 @@ services:
       DOCKER_NETWORK: pontis_network
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${PROJECTS_DIR}:${PROJECTS_DIR}
     depends_on:
       postgres:
         condition: service_healthy
