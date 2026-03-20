@@ -6,6 +6,7 @@ import fs from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
 import unzipper from 'unzipper'
 import tar from 'tar-fs'
+import { writeProjectCompose } from './compose-writer'
 
 const APP_DOMAIN = process.env.APP_DOMAIN ?? 'app.ongoua.pro'
 const DOCKER_NETWORK = process.env.DOCKER_NETWORK ?? 'pontis_network'
@@ -40,7 +41,12 @@ async function normalizeToSiteDir(extractDir: string, siteDir: string): Promise<
   await fs.rename(extractDir, siteDir)
 }
 
-async function buildDockerImage(docker: Dockerode, siteDir: string, imageTag: string): Promise<void> {
+async function buildDockerImage(
+  docker: Dockerode,
+  siteDir: string,
+  primaryTag: string,
+  extraTags: string[]
+): Promise<string> {
   // Écrire le Dockerfile
   const dockerfile = `FROM nginx:alpine\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n`
   await fs.writeFile(path.join(siteDir, 'Dockerfile'), dockerfile)
@@ -48,22 +54,52 @@ async function buildDockerImage(docker: Dockerode, siteDir: string, imageTag: st
   // Créer l'archive tar du contexte de build
   const tarStream = tar.pack(siteDir)
 
-  const buildStream = await docker.buildImage(tarStream as any, { t: imageTag })
+  const buildStream = await docker.buildImage(tarStream as any, { t: primaryTag })
+
+  const logLines: string[] = []
+
+  function timestamp(): string {
+    return new Date().toLocaleTimeString('fr-FR', {
+      timeZone: 'Europe/Paris',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+  }
 
   await new Promise<void>((resolve, reject) => {
-    docker.modem.followProgress(buildStream, (err: Error | null) => {
-      if (err) reject(err)
-      else resolve()
-    })
+    docker.modem.followProgress(
+      buildStream,
+      (err: Error | null) => {
+        if (err) reject(err)
+        else resolve()
+      },
+      (event: { stream?: string; error?: string }) => {
+        if (event.stream) {
+          const line = event.stream.replace(/\n$/, '')
+          if (line.trim()) logLines.push(`[${timestamp()}] ${line}\n`)
+        }
+        if (event.error) logLines.push(`[${timestamp()}] ERROR: ${event.error}\n`)
+      }
+    )
   })
+
+  // Appliquer les tags supplémentaires (ex: :deploy-{deploymentId})
+  for (const extra of extraTags) {
+    const [repo, tag] = extra.split(':')
+    await docker.getImage(primaryTag).tag({ repo, tag })
+  }
+
+  return logLines.join('')
 }
 
 export async function buildAndRunStaticProject(
   docker: Dockerode,
   _projectId: string,
   slug: string,
-  zipBuffer: Buffer
-): Promise<string> {
+  zipBuffer: Buffer,
+  deploymentId: string
+): Promise<{ domain: string; logs: string }> {
   const tmpBase = path.join(os.tmpdir(), randomUUID())
   const extractDir = path.join(tmpBase, 'extract')
   const siteDir = path.join(tmpBase, 'site')
@@ -74,23 +110,23 @@ export async function buildAndRunStaticProject(
     await extractZip(zipBuffer, extractDir)
     await normalizeToSiteDir(extractDir, siteDir)
 
-    const imageTag = `pontis-${slug}:latest`
-    await buildDockerImage(docker, siteDir, imageTag)
+    const latestTag = `pontis-${slug}:latest`
+    const versionedTag = `pontis-${slug}:deploy-${deploymentId}`
+
+    const logs = await buildDockerImage(docker, siteDir, latestTag, [versionedTag])
 
     const containerName = `pontis-${slug}`
     const domain = `${slug}.${APP_DOMAIN}`
 
     // Supprimer un container existant du même nom si présent
     try {
-      const existing = docker.getContainer(containerName)
-      await existing.stop()
-      await existing.remove()
+      await docker.getContainer(containerName).remove({ force: true })
     } catch {
       // Pas de container existant, c'est normal
     }
 
     const container = await docker.createContainer({
-      Image: imageTag,
+      Image: latestTag,
       name: containerName,
       Labels: {
         'traefik.enable': 'true',
@@ -106,8 +142,9 @@ export async function buildAndRunStaticProject(
     })
 
     await container.start()
+    await writeProjectCompose(slug, domain, DOCKER_NETWORK)
 
-    return domain
+    return { domain, logs }
   } finally {
     // Nettoyer le dossier temporaire
     await fs.rm(tmpBase, { recursive: true, force: true })

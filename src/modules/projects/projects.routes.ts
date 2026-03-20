@@ -15,6 +15,9 @@ const HTTP_STATUS: Record<ProjectErrorCode, number> = {
   PROJECT_NAME_TAKEN: 409,
   PROJECT_NOT_FOUND: 404,
   BUILD_FAILED: 500,
+  DEPLOYMENT_NOT_FOUND: 404,
+  DEPLOYMENT_IN_USE: 409,
+  DEPLOYMENT_BUILDING: 409,
 }
 
 const projectsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -101,6 +104,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
         slug: project.slug,
         status: project.status,
         domain: project.domain ?? null,
+        deploymentId: project.deploymentId,
       })
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -193,6 +197,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
         slug: project.slug,
         status: project.status,
         domain: project.domain ?? null,
+        deploymentId: project.deploymentId,
       })
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -284,6 +289,58 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
     const result = await svc.debugContainerInspect(request.user.sub, id)
     return reply.send(result)
+  })
+
+  // GET /:id/deployments — liste des déploiements d'un projet
+  fastify.get('/:id/deployments', { preHandler: authenticate }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const { page, limit } = request.query as { page?: string; limit?: string }
+    try {
+      const result = await svc.listDeployments(request.user.sub, id, {
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      })
+      return reply.send(result)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // GET /:id/deployments/:deploymentId — détail d'un déploiement
+  fastify.get('/:id/deployments/:deploymentId', { preHandler: authenticate }, async (request, reply) => {
+    const { id, deploymentId } = request.params as { id: string; deploymentId: string }
+    try {
+      const deployment = await svc.getDeployment(request.user.sub, id, deploymentId)
+      return reply.send(deployment)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // DELETE /:id/deployments/:deploymentId — supprimer un déploiement
+  fastify.delete('/:id/deployments/:deploymentId', { preHandler: authenticate }, async (request, reply) => {
+    const { id, deploymentId } = request.params as { id: string; deploymentId: string }
+    try {
+      await svc.deleteDeployment(request.user.sub, id, deploymentId)
+      return reply.status(204).send()
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // POST /:id/deployments/:deploymentId/rollback — rollback vers un déploiement précédent
+  fastify.post('/:id/deployments/:deploymentId/rollback', { preHandler: authenticate }, async (request, reply) => {
+    const { id, deploymentId } = request.params as { id: string; deploymentId: string }
+    try {
+      const project = await svc.rollbackDeployment(request.user.sub, id, deploymentId)
+      return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
   })
 
   // PATCH /:id — renommer un projet

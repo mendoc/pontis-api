@@ -59,9 +59,10 @@ model Project {
   domain      String?
   status      String       @default("inactive")
   createdAt   DateTime     @default(now())
-  restartedAt DateTime?
-  user        User         @relation(fields: [userId], references: [id])
-  deployments Deployment[]
+  restartedAt           DateTime?
+  currentDeploymentId   String?
+  user                  User         @relation(fields: [userId], references: [id])
+  deployments           Deployment[]
   envVars     EnvVar[]
   port        Port?
 }
@@ -72,13 +73,15 @@ enum ProjectType {
 }
 
 model Deployment {
-  id        String           @id @default(uuid())
-  projectId String
-  commitSha String?
-  status    DeploymentStatus @default(pending)
-  logs      String?
-  createdAt DateTime         @default(now())
-  project   Project          @relation(fields: [projectId], references: [id])
+  id         String           @id @default(uuid())
+  projectId  String
+  commitSha  String?
+  status     DeploymentStatus @default(pending)
+  logs       String?
+  imageTag   String?
+  createdAt  DateTime         @default(now())
+  finishedAt DateTime?
+  project    Project          @relation(fields: [projectId], references: [id])
 }
 
 enum DeploymentStatus {
