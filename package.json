@@ -12,7 +12,7 @@
     "db:studio": "dotenv -e .env -- prisma studio",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "dotenv -e .env -- sh scripts/deploy.sh"
+    "deploy": "npm version minor && dotenv -e .env -- sh scripts/deploy.sh"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
