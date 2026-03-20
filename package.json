@@ -1,6 +1,6 @@
 {
   "name": "@pontis/api",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "private": true,
   "scripts": {
     "dev": "dotenv -e .env -- ts-node-dev --respawn --transpile-only src/index.ts",
@@ -12,7 +12,7 @@
     "db:studio": "dotenv -e .env -- prisma studio",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "npm version minor && dotenv -e .env -- sh scripts/deploy.sh"
+    "deploy": "dotenv -e .env -- sh scripts/deploy.sh"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
