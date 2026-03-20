@@ -283,7 +283,9 @@ export class ProjectsService {
           where: { id: deployment.id },
           data: { status: 'failed', logs: errorMsg, finishedAt: new Date() },
         })
-        await this.prisma.project.update({ where: { id: projectId }, data: { status: 'failed' } })
+        // Si un déploiement était déjà en production, son container est toujours actif — on y revient.
+        const revertStatus = project.currentDeploymentId ? 'running' : 'failed'
+        await this.prisma.project.update({ where: { id: projectId }, data: { status: revertStatus } })
       })
 
     const updatedProject = await this.prisma.project.findFirst({

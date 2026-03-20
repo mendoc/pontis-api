@@ -12,14 +12,22 @@ const APP_DOMAIN = process.env.APP_DOMAIN ?? 'app.ongoua.pro'
 const DOCKER_NETWORK = process.env.DOCKER_NETWORK ?? 'pontis_network'
 
 async function extractZip(zipBuffer: Buffer, destDir: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const { Readable } = require('node:stream')
-    const readable = Readable.from(zipBuffer)
-    readable
-      .pipe(unzipper.Extract({ path: destDir }))
-      .on('close', resolve)
-      .on('error', reject)
-  })
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const { Readable } = require('node:stream')
+      const readable = Readable.from(zipBuffer)
+      readable
+        .pipe(unzipper.Extract({ path: destDir }))
+        .on('close', resolve)
+        .on('error', reject)
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('invalid signature') || msg.includes('end of central directory')) {
+      throw new Error('Le fichier fourni n\'est pas un ZIP valide.')
+    }
+    throw err
+  }
 }
 
 async function normalizeToSiteDir(extractDir: string, siteDir: string): Promise<void> {
