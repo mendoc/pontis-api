@@ -12,10 +12,11 @@ Pontis is a self-hosted PaaS (Platform as a Service) — a Netlify/Vercel/Heroku
 
 All commands run from this directory (`/api`).
 
-**Start local dependencies (PostgreSQL + Redis only):**
+**Start local dependencies (PostgreSQL + Redis + Mailpit) :**
 ```bash
-docker compose -f docker-compose.dev.yml up postgres redis -d
+docker compose -f docker-compose.dev.yml up postgres redis mailpit -d
 ```
+Mailpit est le serveur SMTP de développement — UI sur http://localhost:8025, SMTP sur port 1025.
 
 **Start full dev stack avec hot-reload automatique (recommandé) :**
 ```bash
@@ -67,17 +68,17 @@ All routes are mounted under the `/api/v1` prefix.
 - **`plugins/prisma.ts`** — singleton PrismaClient decorated onto Fastify instance as `fastify.prisma`
 - **`plugins/docker.ts`** — Dockerode instance decorated onto Fastify as `fastify.docker`; connects via `/var/run/docker.sock`
 - **`modules/auth/`** — auth module:
-  - `auth.routes.ts` — register, login, refresh, logout, GitLab OAuth2 (`/auth/gitlab` + callback)
-  - `auth.service.ts` — `AuthService` class; depends on `JwtOperations` interface (injected from jwt plugin)
-  - `auth.schemas.ts` — Zod schemas for request bodies
-  - `auth.errors.ts` — `AuthError` class with typed `AuthErrorCode` enum mapped to HTTP status codes
+  - `auth.routes.ts` — register, login, refresh, logout, GitLab OAuth2 (`/auth/gitlab` + callback), **password reset flow** (`POST /auth/forgot-password` → `POST /auth/verify-reset-code` → `POST /auth/reset-password`)
+  - `auth.service.ts` — `AuthService` class; depends on `JwtOperations` interface (injected from jwt plugin); `requestPasswordReset()` génère un code 6 chiffres haché, `verifyResetCode()` valide sans le consommer, `resetPassword()` réinitialise le mot de passe et révoque tous les refresh tokens
+  - `auth.schemas.ts` — Zod schemas for request bodies (incl. `ForgotPasswordBody`, `VerifyResetCodeBody`, `ResetPasswordBody`)
+  - `auth.errors.ts` — `AuthError` class with `AuthErrorCode` enum (incl. `EMAIL_NOT_FOUND`, `RESET_CODE_INVALID`, `RESET_CODE_EXPIRED`, `SSO_ACCOUNT_RESET_NOT_ALLOWED`)
 - **`modules/projects/`** — projects module (Phase 3):
   - `projects.routes.ts` — `GET /check-slug`, `POST /` (multipart ZIP upload, 50 MB limit), `GET /`, `GET /:id`, `PATCH /:id` (rename), `DELETE /:id`, `POST /:id/start|stop|restart`, `POST /upload/init|chunk|finalize|redeploy`; routes de debug (dev) : `GET|POST /:id/debug/container-inspect|stop|remove|create|start`; all protected by `authenticate`
-  - `projects.service.ts` — `ProjectsService` class; `createProject` fires `buildAndRunStaticProject` as a fire-and-forget async operation; `restartProject` fait stop → remove → createContainer → start (recrée un nouveau container depuis l'image existante, met à jour `restartedAt`); `deleteProject` stops/removes the Docker container + image then calls `prisma.project.delete` (cascade: Deployment, EnvVar, Port)
+  - `projects.service.ts` — `ProjectsService` class; `createProject` et `redeployProject` (redéploiement avec nouveau ZIP) fires `buildAndRunStaticProject` as fire-and-forget; `restartProject` fait stop → remove → createContainer → start (recrée depuis l'image existante, met à jour `restartedAt`); `listProjects` supporte pagination (`page`/`limit`), recherche avec normalisation des accents, tri (`sortBy`: name|domain|status|type|createdAt, `sortOrder`: asc|desc); `deleteProject` stops/removes the Docker container + image then calls `prisma.project.delete` (cascade: Deployment, EnvVar, Port)
   - `projects.schemas.ts` — Zod schemas for project bodies
   - `projects.errors.ts` — `ProjectError` with `ProjectErrorCode` enum
 - **`lib/static-builder.ts`** — core deployment logic: extract ZIP → normalize directory structure (handles macOS `__MACOSX` artifacts and single-subdirectory ZIPs) → build `nginx:alpine` Docker image → create & start container with Traefik labels for HTTPS routing. Uses env vars `APP_DOMAIN` (default `app.ongoua.pro`) and `DOCKER_NETWORK` (default `pontis_network`).
-- **`lib/mailer.ts`** — email via Resend (production) or local SMTP (dev)
+- **`lib/mailer.ts`** — email via nodemailer; `sendPasswordResetEmail()` envoie un code 6 chiffres valable 15 min; en dev pointe vers Mailpit (SMTP localhost:1025)
 - **`lib/hash.ts`** — bcrypt helpers
 - **`middleware/authenticate.ts`** — Bearer token extractor; decorate protected routes with `{ preHandler: [authenticate] }`
 - **`config/cookies.ts`** — shared cookie name (`REFRESH_COOKIE`) and options (`cookieOpts`)
@@ -97,8 +98,9 @@ Pattern for route tests: use `app.inject()`, never start a real server. Pattern 
 
 | Table | Key fields |
 |---|---|
-| `users` | id (uuid), email (unique), passwordHash?, gitlabId?, gitlabToken?, createdAt |
+| `users` | id (uuid), email (unique), name?, passwordHash?, gitlabId?, gitlabToken?, createdAt |
 | `refresh_tokens` | id, userId, familyId, tokenHash (unique), expiresAt, revokedAt? |
+| `password_reset_codes` | id, userId, codeHash, expiresAt, usedAt?, createdAt |
 | `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, restartedAt?, createdAt, port? |
 | `deployments` | id, projectId, commitSha?, status (pending\|building\|success\|failed), logs? |
 | `env_vars` | id, projectId, key, valueEncrypted |
@@ -130,8 +132,8 @@ projet-slug/
 ## Development Roadmap
 
 - **Phase 1 — Infrastructure** ✅
-- **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2
-- **Phase 3 — Static Sites** ⚙️ In progress — project CRUD, file upload, Nginx container deployment done; blue/green pending
+- **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2 + password reset flow
+- **Phase 3 — Static Sites** ⚙️ In progress — project CRUD, chunked ZIP upload, Nginx container deployment, redeploy done; blue/green pending
 - **Phase 4 — GitLab Build Pipeline** — Nixpacks, blue/green, real-time WebSocket logs
 - **Phase 5 — Auto CI/CD** — GitLab push webhooks, BullMQ async jobs
 - **Phase 6 — Observability** — container logs/metrics, rollback
