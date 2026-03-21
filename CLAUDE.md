@@ -154,20 +154,12 @@ Un hook `pre-commit` (`.githooks/pre-commit`) lance `npm test` automatiquement a
 ### Publier une version sur GHCR
 
 ```bash
-npm test                          # vérifier que tout passe
-
-# Choisir selon le type de changement :
-npm version patch --no-git-tag-version   # bug fix
-npm version minor --no-git-tag-version   # nouvelle fonctionnalité
-npm version major --no-git-tag-version   # breaking change
-
-git add package.json package-lock.json
-git commit -m "chore: bump version x.y.z"
-git push
-
-git tag vx.y.z
-git push origin vx.y.z            # ← déclenche le workflow GitHub Actions
+npm run release:patch   # bug fix
+npm run release:minor   # nouvelle fonctionnalité
+npm run release:major   # breaking change
 ```
+
+Chaque commande bumpe `package.json`, commite, crée le tag et push — le workflow GitHub Actions se déclenche automatiquement. Le hook `pre-commit` lance les tests au moment du commit de bump ; si les tests échouent, le release est annulé.
 
 ### En production — après que le workflow GHCR est vert
 
@@ -176,7 +168,7 @@ Un webhook écoute les push d'images sur GHCR et redéploie automatiquement — 
 ### Règles à respecter
 
 - **Les tests s'exécutent automatiquement au commit** via le hook `pre-commit` — ne rien bypasser avec `--no-verify`
-- **Toujours bumper avant de tagger** — le tag = la version embarquée dans l'image Docker
+- **Utiliser `npm run release:*` pour publier** — ne jamais créer de tag manuellement
 - **Ne jamais re-pousser un tag existant** — créer un nouveau tag patch à la place
 - **Les migrations doivent être commitées avant le tag** — sinon elles sont absentes de l'image
 - **`prisma migrate dev` en local, `prisma migrate deploy` en prod** — `dev` crée les migrations, `deploy` les applique
