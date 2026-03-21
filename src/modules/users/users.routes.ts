@@ -26,8 +26,12 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
         }
       : {}
 
-    const validSortBy = ['email', 'name', 'role', 'createdAt'].includes(sortBy) ? sortBy : 'createdAt'
-    const validSortOrder = sortOrder === 'asc' ? 'asc' : ('desc' as const)
+    const validSortBy = ['email', 'name', 'role', 'createdAt', 'projects'].includes(sortBy) ? sortBy : 'createdAt'
+    const validSortOrder: 'asc' | 'desc' = sortOrder === 'asc' ? 'asc' : 'desc'
+
+    const orderBy = validSortBy === 'projects'
+      ? { projects: { _count: validSortOrder } }
+      : { [validSortBy]: validSortOrder }
 
     const [users, total] = await Promise.all([
       fastify.prisma.user.findMany({
@@ -42,7 +46,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
           passwordHash: true,
           _count: { select: { projects: true } },
         },
-        orderBy: { [validSortBy]: validSortOrder },
+        orderBy,
         skip,
         take: limitNum,
       }),
