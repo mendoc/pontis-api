@@ -144,11 +144,12 @@ Le volume `${PROJECTS_DIR}:${PROJECTS_DIR}` est bind-monté symétrique dans le 
 ### Au quotidien — développement
 
 ```bash
-npm test                          # toujours avant de commiter
 git add <fichiers>
-git commit -m "feat|fix|chore: description"
-git push                          # push sur main ne déclenche PAS GHCR
+git commit -m "feat|fix|chore: description"  # les tests s'exécutent automatiquement
+git push                                      # push sur main ne déclenche PAS GHCR
 ```
+
+Un hook `pre-commit` (`.githooks/pre-commit`) lance `npm test` automatiquement avant chaque commit et bloque si un test échoue. Il est activé via le script `prepare` au `npm install`. Après un clone, `npm install` suffit à l'activer.
 
 ### Publier une version sur GHCR
 
@@ -174,7 +175,7 @@ Un webhook écoute les push d'images sur GHCR et redéploie automatiquement — 
 
 ### Règles à respecter
 
-- **`npm test` avant chaque commit** — ne jamais pousser du code cassé
+- **Les tests s'exécutent automatiquement au commit** via le hook `pre-commit` — ne rien bypasser avec `--no-verify`
 - **Toujours bumper avant de tagger** — le tag = la version embarquée dans l'image Docker
 - **Ne jamais re-pousser un tag existant** — créer un nouveau tag patch à la place
 - **Les migrations doivent être commitées avant le tag** — sinon elles sont absentes de l'image
