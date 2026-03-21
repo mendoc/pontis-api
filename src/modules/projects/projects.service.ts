@@ -168,20 +168,33 @@ export class ProjectsService {
     return { data, total, page, limit }
   }
 
-  async getProject(userId: string | undefined, projectId: string, includeUser = false) {
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, ...(userId ? { userId } : {}) },
-      select: includeUser ? PROJECT_SELECT_WITH_USER : PROJECT_SELECT,
-    })
-
+  private async assertAccess(projectId: string, requesterId: string, requesterRole: 'developer' | 'admin') {
+    const project = await this.prisma.project.findUnique({ where: { id: projectId } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
-
+    if (project.userId !== requesterId && requesterRole !== 'admin') {
+      throw new ProjectError('PROJECT_FORBIDDEN', 'Accès non autorisé à ce projet')
+    }
     return project
   }
 
-  async startProject(userId: string | undefined, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async getProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, includeUser = false) {
+    const raw = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { ...PROJECT_SELECT, userId: true, ...(includeUser ? { user: { select: { id: true, email: true, name: true } } } : {}) },
+    })
+
+    if (!raw) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+    if (raw.userId !== requesterId && requesterRole !== 'admin') {
+      throw new ProjectError('PROJECT_FORBIDDEN', 'Accès non autorisé à ce projet')
+    }
+
+    const { userId: _uid, ...project } = raw
+    return project
+  }
+
+  async startProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
+
 
     try {
       await this.docker.getContainer(`pontis-${project.slug}`).start()
@@ -202,9 +215,8 @@ export class ProjectsService {
     })
   }
 
-  async stopProject(userId: string | undefined, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async stopProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     try {
       await this.docker.getContainer(`pontis-${project.slug}`).stop()
@@ -219,9 +231,8 @@ export class ProjectsService {
     })
   }
 
-  async restartProject(userId: string | undefined, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async restartProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     const containerName = `pontis-${project.slug}`
     const imageTag = `pontis-${project.slug}:latest`
@@ -262,9 +273,8 @@ export class ProjectsService {
     })
   }
 
-  async redeployProject(userId: string | undefined, projectId: string, zipBuffer: Buffer) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async redeployProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, zipBuffer: Buffer) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     await this.prisma.project.update({ where: { id: projectId }, data: { status: 'building' } })
 
@@ -301,9 +311,8 @@ export class ProjectsService {
     return { ...updatedProject!, deploymentId: deployment.id }
   }
 
-  async listDeployments(userId: string | undefined, projectId: string, opts: { page?: number; limit?: number } = {}) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async listDeployments(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, opts: { page?: number; limit?: number } = {}) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     const page = Math.max(1, opts.page ?? 1)
     const limit = Math.min(100, Math.max(1, opts.limit ?? 50))
@@ -321,9 +330,8 @@ export class ProjectsService {
     return { data, total, page, limit, currentDeploymentId: project.currentDeploymentId ?? null }
   }
 
-  async getDeployment(userId: string | undefined, projectId: string, deploymentId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async getDeployment(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, deploymentId: string) {
+    await this.assertAccess(projectId, requesterId, requesterRole)
 
     const deployment = await this.prisma.deployment.findFirst({
       where: { id: deploymentId, projectId },
@@ -334,9 +342,8 @@ export class ProjectsService {
     return deployment
   }
 
-  async rollbackDeployment(userId: string | undefined, projectId: string, deploymentId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async rollbackDeployment(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, deploymentId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     const deployment = await this.prisma.deployment.findFirst({
       where: { id: deploymentId, projectId, status: 'success' },
@@ -385,9 +392,8 @@ export class ProjectsService {
     })
   }
 
-  async renameProject(userId: string | undefined, projectId: string, name: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async renameProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, name: string) {
+    await this.assertAccess(projectId, requesterId, requesterRole)
 
     return this.prisma.project.update({
       where: { id: projectId },
@@ -396,9 +402,8 @@ export class ProjectsService {
     })
   }
 
-  async deleteDeployment(userId: string | undefined, projectId: string, deploymentId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async deleteDeployment(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, deploymentId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     const deployment = await this.prisma.deployment.findFirst({ where: { id: deploymentId, projectId } })
     if (!deployment) throw new ProjectError('DEPLOYMENT_NOT_FOUND', 'Déploiement introuvable')
@@ -423,9 +428,8 @@ export class ProjectsService {
     await this.prisma.deployment.delete({ where: { id: deploymentId } })
   }
 
-  async deleteProject(userId: string | undefined, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  async deleteProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
     // Supprimer le container (force: true gère tous les états)
     try {
@@ -450,29 +454,28 @@ export class ProjectsService {
 
   // --- Méthodes de debug step-by-step ---
 
-  private async getProjectContainer(userId: string, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
-    if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
+  private async getProjectContainer(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const project = await this.assertAccess(projectId, requesterId, requesterRole)
     return { project, containerName: `pontis-${project.slug}`, imageTag: `pontis-${project.slug}:latest` }
   }
 
-  async debugContainerStop(userId: string, projectId: string) {
-    const { containerName } = await this.getProjectContainer(userId, projectId)
+  async debugContainerStop(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const { containerName } = await this.getProjectContainer(requesterId, requesterRole, projectId)
     const c = this.docker.getContainer(containerName)
     await c.stop()
     const info = await c.inspect()
     return { step: 'stop', containerName, id: info.Id.slice(0, 12), status: info.State.Status }
   }
 
-  async debugContainerRemove(userId: string, projectId: string) {
-    const { containerName } = await this.getProjectContainer(userId, projectId)
+  async debugContainerRemove(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const { containerName } = await this.getProjectContainer(requesterId, requesterRole, projectId)
     const c = this.docker.getContainer(containerName)
     await c.remove()
     return { step: 'remove', containerName, removed: true }
   }
 
-  async debugContainerCreate(userId: string, projectId: string) {
-    const { project, containerName, imageTag } = await this.getProjectContainer(userId, projectId)
+  async debugContainerCreate(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const { project, containerName, imageTag } = await this.getProjectContainer(requesterId, requesterRole, projectId)
     const slug = project.slug
     const domain = project.domain ?? `${slug}.${process.env.APP_DOMAIN ?? 'app.ongoua.pro'}`
     const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
@@ -492,16 +495,16 @@ export class ProjectsService {
     return { step: 'create', containerName, newId: container.id.slice(0, 12) }
   }
 
-  async debugContainerStart(userId: string, projectId: string) {
-    const { containerName } = await this.getProjectContainer(userId, projectId)
+  async debugContainerStart(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const { containerName } = await this.getProjectContainer(requesterId, requesterRole, projectId)
     const c = this.docker.getContainer(containerName)
     await c.start()
     const info = await c.inspect()
     return { step: 'start', containerName, id: info.Id.slice(0, 12), status: info.State.Status }
   }
 
-  async debugContainerInspect(userId: string, projectId: string) {
-    const { containerName } = await this.getProjectContainer(userId, projectId)
+  async debugContainerInspect(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    const { containerName } = await this.getProjectContainer(requesterId, requesterRole, projectId)
     const info = await this.docker.getContainer(containerName).inspect()
     return { containerName, id: info.Id.slice(0, 12), status: info.State.Status, created: info.Created }
   }

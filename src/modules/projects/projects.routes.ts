@@ -15,6 +15,7 @@ import { ProjectsService } from './projects.service'
 const HTTP_STATUS: Record<ProjectErrorCode, number> = {
   PROJECT_NAME_TAKEN: 409,
   PROJECT_NOT_FOUND: 404,
+  PROJECT_FORBIDDEN: 403,
   BUILD_FAILED: 500,
   DEPLOYMENT_NOT_FOUND: 404,
   DEPLOYMENT_IN_USE: 409,
@@ -22,10 +23,6 @@ const HTTP_STATUS: Record<ProjectErrorCode, number> = {
 }
 
 const projectsRoutes: FastifyPluginAsync = async (fastify) => {
-  // Pour les admins, pas de filtre par userId — ils peuvent accéder à tous les projets
-  const uid = (req: Parameters<typeof authenticate>[0]) =>
-    req.user.role === 'admin' ? undefined : req.user.sub
-
   await fastify.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } })
 
   const svc = new ProjectsService(fastify.prisma, fastify.docker)
@@ -147,7 +144,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      const project = await svc.redeployProject(request.user.sub, projectId, zipBuffer)
+      const project = await svc.redeployProject(request.user.sub, request.user.role, projectId, zipBuffer)
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -227,7 +224,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/:id/start', { preHandler: [authenticate, requirePermission('projects:start')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
     try {
-      const project = await svc.startProject(uid(request), id)
+      const project = await svc.startProject(request.user.sub, request.user.role, id)
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -239,7 +236,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/:id/stop', { preHandler: [authenticate, requirePermission('projects:stop')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
     try {
-      const project = await svc.stopProject(uid(request), id)
+      const project = await svc.stopProject(request.user.sub, request.user.role, id)
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -251,7 +248,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/:id/restart', { preHandler: [authenticate, requirePermission('projects:restart')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
     try {
-      const project = await svc.restartProject(uid(request), id)
+      const project = await svc.restartProject(request.user.sub, request.user.role, id)
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -264,35 +261,35 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /:id/debug/container-stop
   fastify.post('/:id/debug/container-stop', { preHandler: [authenticate, requirePermission('projects:debug')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const result = await svc.debugContainerStop(request.user.sub, id)
+    const result = await svc.debugContainerStop(request.user.sub, request.user.role, id)
     return reply.send(result)
   })
 
   // POST /:id/debug/container-remove
   fastify.post('/:id/debug/container-remove', { preHandler: [authenticate, requirePermission('projects:debug')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const result = await svc.debugContainerRemove(request.user.sub, id)
+    const result = await svc.debugContainerRemove(request.user.sub, request.user.role, id)
     return reply.send(result)
   })
 
   // POST /:id/debug/container-create
   fastify.post('/:id/debug/container-create', { preHandler: [authenticate, requirePermission('projects:debug')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const result = await svc.debugContainerCreate(request.user.sub, id)
+    const result = await svc.debugContainerCreate(request.user.sub, request.user.role, id)
     return reply.send(result)
   })
 
   // POST /:id/debug/container-start
   fastify.post('/:id/debug/container-start', { preHandler: [authenticate, requirePermission('projects:debug')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const result = await svc.debugContainerStart(request.user.sub, id)
+    const result = await svc.debugContainerStart(request.user.sub, request.user.role, id)
     return reply.send(result)
   })
 
   // GET /:id/debug/container-inspect
   fastify.get('/:id/debug/container-inspect', { preHandler: [authenticate, requirePermission('projects:debug')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
-    const result = await svc.debugContainerInspect(request.user.sub, id)
+    const result = await svc.debugContainerInspect(request.user.sub, request.user.role, id)
     return reply.send(result)
   })
 
@@ -301,7 +298,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
     const { page, limit } = request.query as { page?: string; limit?: string }
     try {
-      const result = await svc.listDeployments(uid(request), id, {
+      const result = await svc.listDeployments(request.user.sub, request.user.role, id, {
         page: page ? Number(page) : undefined,
         limit: limit ? Number(limit) : undefined,
       })
@@ -316,7 +313,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/:id/deployments/:deploymentId', { preHandler: [authenticate, requirePermission('projects:deployments:read')] }, async (request, reply) => {
     const { id, deploymentId } = request.params as { id: string; deploymentId: string }
     try {
-      const deployment = await svc.getDeployment(uid(request), id, deploymentId)
+      const deployment = await svc.getDeployment(request.user.sub, request.user.role, id, deploymentId)
       return reply.send(deployment)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -328,7 +325,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete('/:id/deployments/:deploymentId', { preHandler: [authenticate, requirePermission('projects:deployments:delete')] }, async (request, reply) => {
     const { id, deploymentId } = request.params as { id: string; deploymentId: string }
     try {
-      await svc.deleteDeployment(uid(request), id, deploymentId)
+      await svc.deleteDeployment(request.user.sub, request.user.role, id, deploymentId)
       return reply.status(204).send()
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -340,7 +337,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post('/:id/deployments/:deploymentId/rollback', { preHandler: [authenticate, requirePermission('projects:deployments:rollback')] }, async (request, reply) => {
     const { id, deploymentId } = request.params as { id: string; deploymentId: string }
     try {
-      const project = await svc.rollbackDeployment(uid(request), id, deploymentId)
+      const project = await svc.rollbackDeployment(request.user.sub, request.user.role, id, deploymentId)
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -358,7 +355,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     }
 
     try {
-      const project = await svc.renameProject(uid(request), id, name.trim())
+      const project = await svc.renameProject(request.user.sub, request.user.role, id, name.trim())
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -370,7 +367,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete('/:id', { preHandler: [authenticate, requirePermission('projects:delete')] }, async (request, reply) => {
     const { id } = request.params as { id: string }
     try {
-      await svc.deleteProject(uid(request), id)
+      await svc.deleteProject(request.user.sub, request.user.role, id)
       return reply.status(204).send()
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
@@ -383,7 +380,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     const { id } = request.params as { id: string }
 
     try {
-      const project = await svc.getProject(uid(request), id, request.user.role === 'admin')
+      const project = await svc.getProject(request.user.sub, request.user.role, id, request.user.role === 'admin')
       return reply.send(project)
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })

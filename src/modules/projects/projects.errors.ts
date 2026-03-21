@@ -1,6 +1,7 @@
 export type ProjectErrorCode =
   | 'PROJECT_NAME_TAKEN'
   | 'PROJECT_NOT_FOUND'
+  | 'PROJECT_FORBIDDEN'
   | 'BUILD_FAILED'
   | 'DEPLOYMENT_NOT_FOUND'
   | 'DEPLOYMENT_IN_USE'
