@@ -79,8 +79,16 @@ export class AuthService {
       where: { tokenHash: hashToken(rawToken) },
     })
 
-    if (!stored || stored.revokedAt) {
+    if (!stored) {
       throw new AuthError('INVALID_REFRESH_TOKEN', 'Invalid or expired refresh token')
+    }
+
+    if (stored.revokedAt) {
+      await this.prisma.refreshToken.updateMany({
+        where: { familyId: stored.familyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+      throw new AuthError('REFRESH_TOKEN_REUSE', 'Refresh token reuse detected')
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } })

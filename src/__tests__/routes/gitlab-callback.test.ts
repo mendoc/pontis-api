@@ -9,14 +9,16 @@ import type { FastifyInstance } from 'fastify'
 const AUTH = `${API_PREFIX}/auth`
 
 const GITLAB_URL = 'http://gitlab.test'
+const FRONTEND_URL = 'http://localhost:3000'
 const GITLAB_ENV = {
   GITLAB_URL,
   GITLAB_CLIENT_ID: 'test-client-id',
   GITLAB_CLIENT_SECRET: 'test-client-secret',
   GITLAB_CALLBACK_URL: 'http://localhost:3001/auth/gitlab/callback',
+  FRONTEND_URL,
 }
 
-const mockGitlabUser = { id: 42, email: 'gitlab@example.com' }
+const mockGitlabUser = { id: 42, email: 'gitlab@example.com', name: 'GitLab User' }
 
 // ------------------------------------------------------------------ without env vars
 describe('GET /auth/gitlab/callback - without env vars', () => {
@@ -34,11 +36,10 @@ describe('GET /auth/gitlab/callback - without env vars', () => {
     await app.close()
   })
 
-  it('→ 503 when GitLab env vars not configured', async () => {
+  it('→ redirect to login?error=gitlab_failed when GitLab env vars not configured', async () => {
     const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=abc` })
-    assert.equal(response.statusCode, 503)
-    const body = response.json<{ error: string }>()
-    assert.equal(body.error, 'GitLab OAuth2 not configured')
+    assert.equal(response.statusCode, 302)
+    assert.ok(response.headers.location?.includes('error=gitlab_failed'))
   })
 })
 
@@ -55,9 +56,11 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
           upsert: async (args: any) => ({
             id: 'user-uuid-gitlab',
             email: args.create.email,
+            name: args.create.name ?? null,
             gitlabId: args.create.gitlabId,
             gitlabToken: args.create.gitlabToken,
             passwordHash: null,
+            role: 'developer',
             createdAt: new Date(),
           }),
         },
@@ -76,26 +79,24 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
     setGlobalDispatcher(originalDispatcher)
   })
 
-  it('missing code query param → 400', async () => {
+  it('missing code query param → redirect to login?error=gitlab_denied', async () => {
     const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback` })
-    assert.equal(response.statusCode, 400)
-    const body = response.json<{ error: string }>()
-    assert.equal(body.error, 'Missing OAuth2 code')
+    assert.equal(response.statusCode, 302)
+    assert.ok(response.headers.location?.includes('error=gitlab_denied'))
   })
 
-  it('token exchange fails → 502', async () => {
+  it('token exchange fails → redirect to login?error=gitlab_failed', async () => {
     const agent = new MockAgent()
     agent.disableNetConnect()
     setGlobalDispatcher(agent)
     agent.get(GITLAB_URL).intercept({ path: '/oauth/token', method: 'POST' }).reply(400, { error: 'bad_code' })
 
     const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=bad` })
-    assert.equal(response.statusCode, 502)
-    const body = response.json<{ error: string }>()
-    assert.equal(body.error, 'Failed to exchange GitLab code')
+    assert.equal(response.statusCode, 302)
+    assert.ok(response.headers.location?.includes('error=gitlab_failed'))
   })
 
-  it('profile fetch fails → 502', async () => {
+  it('profile fetch fails → redirect to login?error=gitlab_failed', async () => {
     const agent = new MockAgent()
     agent.disableNetConnect()
     setGlobalDispatcher(agent)
@@ -104,12 +105,11 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
     pool.intercept({ path: '/api/v4/user', method: 'GET' }).reply(401, { message: 'Unauthorized' })
 
     const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=valid` })
-    assert.equal(response.statusCode, 502)
-    const body = response.json<{ error: string }>()
-    assert.equal(body.error, 'Failed to fetch GitLab user profile')
+    assert.equal(response.statusCode, 302)
+    assert.ok(response.headers.location?.includes('error=gitlab_failed'))
   })
 
-  it('success → 200, returns accessToken and userId, sets refresh_token cookie', async () => {
+  it('success → redirect to /auth/callback, sets refresh_token cookie', async () => {
     const agent = new MockAgent()
     agent.disableNetConnect()
     setGlobalDispatcher(agent)
@@ -118,10 +118,8 @@ describe('GET /auth/gitlab/callback - with env vars', () => {
     pool.intercept({ path: '/api/v4/user', method: 'GET' }).reply(200, mockGitlabUser)
 
     const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab/callback?code=valid` })
-    assert.equal(response.statusCode, 200)
-    const body = response.json<{ accessToken: string; userId: string }>()
-    assert.ok(typeof body.accessToken === 'string' && body.accessToken.length > 0)
-    assert.ok(typeof body.userId === 'string' && body.userId.length > 0)
+    assert.equal(response.statusCode, 302)
+    assert.ok(response.headers.location?.includes('/auth/callback'))
     const cookies = response.headers['set-cookie']
     assert.ok(cookies, 'set-cookie header should be present')
     const cookieStr = Array.isArray(cookies) ? cookies.join('; ') : cookies
