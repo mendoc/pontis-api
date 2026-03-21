@@ -170,10 +170,7 @@ git push origin vx.y.z            # ← déclenche le workflow GitHub Actions
 
 ### En production — après que le workflow GHCR est vert
 
-```bash
-docker compose pull
-docker compose up -d              # l'entrypoint applique prisma migrate deploy
-```
+Un webhook écoute les push d'images sur GHCR et redéploie automatiquement — aucune commande manuelle nécessaire. L'entrypoint du container applique `prisma migrate deploy` au démarrage.
 
 ### Règles à respecter
 
