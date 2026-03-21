@@ -1,5 +1,13 @@
 #!/bin/sh
-echo "→ Running tests before commit..."
+echo "→ Type-checking..."
+npm run build
+if [ $? -ne 0 ]; then
+  echo "✗ TypeScript errors — commit aborted."
+  exit 1
+fi
+echo "✓ Type-check passed."
+
+echo "→ Running tests..."
 npm test
 if [ $? -ne 0 ]; then
   echo "✗ Tests failed — commit aborted."
