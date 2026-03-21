@@ -7,6 +7,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  developer
+  admin
+}
+
 model User {
   id                  String               @id @default(uuid())
   email               String               @unique
@@ -14,6 +19,7 @@ model User {
   passwordHash        String?
   gitlabId            Int?                 @unique
   gitlabToken         String?
+  role                UserRole             @default(developer)
   createdAt           DateTime             @default(now())
   projects            Project[]
   refreshTokens       RefreshToken[]

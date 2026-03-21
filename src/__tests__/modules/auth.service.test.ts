@@ -26,6 +26,7 @@ const mockUserBase = {
   email: 'test@example.com',
   gitlabId: null,
   gitlabToken: null,
+  role: 'developer' as const,
   createdAt: new Date(),
 }
 

@@ -43,7 +43,7 @@ export class AuthService {
     const user = await this.prisma.user.create({ data: { email, passwordHash } })
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined, role: user.role }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
@@ -61,7 +61,7 @@ export class AuthService {
     if (!valid) throw new AuthError('INVALID_CREDENTIALS', 'Invalid credentials')
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined, role: user.role }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
@@ -86,7 +86,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } })
     if (!user) throw new AuthError('USER_NOT_FOUND', 'User not found')
 
-    const { accessToken } = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, stored.familyId)
+    const { accessToken } = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined, role: user.role }, stored.familyId)
 
     return { accessToken, refreshToken: rawToken }
   }
@@ -172,7 +172,7 @@ export class AuthService {
     })
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined, role: user.role }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }
@@ -241,7 +241,7 @@ export class AuthService {
     ])
 
     const familyId = randomUUID()
-    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined }, familyId)
+    const tokens = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined, role: user.role }, familyId)
     await this.storeRefreshToken(user.id, familyId, tokens.refreshToken)
 
     return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, userId: user.id }

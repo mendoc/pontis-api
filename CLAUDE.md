@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pontis is a self-hosted PaaS (Platform as a Service) — a Netlify/Vercel/Heroku alternative. This repository (`github.com/mendoc/pontis-api`) is the standalone Fastify backend API (Node.js 20), port 3001.
 
-**Current status:** Phase 3 (Static Sites) is largely complete — project CRUD, ZIP upload, Nginx container deployment, versioned deployments, rollback, and persistent compose files are implemented. Blue/green and GitLab pipeline are next.
+**Current status:** Phase 3 (Static Sites) is largely complete — project CRUD, ZIP upload, Nginx container deployment, versioned deployments, rollback, and persistent compose files are implemented. Role/permission system (`developer`/`admin`) is implemented. Blue/green and GitLab pipeline are next.
 
 ## Development Commands
 
@@ -70,7 +70,7 @@ All routes are mounted under the `/api/v1` prefix.
 
 - **`app.ts`** — Fastify app builder; accepts `prismaOverride` option (used in tests); registers plugins (cors, cookies, prisma, jwt) and mounts routes
 - **`index.ts`** — entry point; binds to `0.0.0.0:3001`
-- **`plugins/jwt.ts`** — RS256 access tokens (15 min) via `jsonwebtoken`; HS256 refresh tokens (7 days) stored as httpOnly `refresh_token` cookie; auto-generates ephemeral RSA keypair in dev
+- **`plugins/jwt.ts`** — RS256 access tokens (15 min) via `jsonwebtoken`; HS256 refresh tokens (7 days) stored as httpOnly `refresh_token` cookie; auto-generates ephemeral RSA keypair in dev; `JwtPayload` inclut `role: 'developer' | 'admin'`
 - **`plugins/prisma.ts`** — singleton PrismaClient decorated onto Fastify instance as `fastify.prisma`
 - **`plugins/docker.ts`** — Dockerode instance decorated onto Fastify as `fastify.docker`; connects via `/var/run/docker.sock`
 - **`modules/auth/`** — auth module:
@@ -88,7 +88,9 @@ All routes are mounted under the `/api/v1` prefix.
 - **`lib/mailer.ts`** — email via nodemailer; `sendPasswordResetEmail()` envoie un code 6 chiffres valable 15 min; en dev pointe vers Mailpit (SMTP localhost:1025)
 - **`lib/hash.ts`** — bcrypt helpers
 - **`middleware/authenticate.ts`** — Bearer token extractor; decorate protected routes with `{ preHandler: [authenticate] }`
+- **`middleware/requirePermission.ts`** — factory `requirePermission(permission)` → preHandler qui renvoie 403 si le rôle JWT n'a pas la permission; toujours placé après `authenticate`
 - **`config/cookies.ts`** — shared cookie name (`REFRESH_COOKIE`) and options (`cookieOpts`)
+- **`config/permissions.ts`** — type `Permission`, `ROLE_PERMISSIONS` map, `hasPermission(role, permission)`; `developer` a toutes les permissions `projects:*` sauf `projects:debug`; `admin` a toutes les permissions
 
 ## Testing Patterns
 
@@ -105,7 +107,7 @@ Pattern for route tests: use `app.inject()`, never start a real server. Pattern 
 
 | Table | Key fields |
 |---|---|
-| `users` | id (uuid), email (unique), name?, passwordHash?, gitlabId?, gitlabToken?, createdAt |
+| `users` | id (uuid), email (unique), name?, passwordHash?, gitlabId?, gitlabToken?, role (developer\|admin), createdAt |
 | `refresh_tokens` | id, userId, familyId, tokenHash (unique), expiresAt, revokedAt? |
 | `password_reset_codes` | id, userId, codeHash, expiresAt, usedAt?, createdAt |
 | `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, restartedAt?, currentDeploymentId?, createdAt, port? |
@@ -141,7 +143,7 @@ Le volume `${PROJECTS_DIR}:${PROJECTS_DIR}` est bind-monté symétrique dans le 
 
 - **Phase 1 — Infrastructure** ✅
 - **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2 + password reset flow
-- **Phase 3 — Static Sites** ⚙️ Largely done — project CRUD, chunked ZIP upload, Nginx deployment, versioned deployments (imageTag), rollback, persistent compose files; blue/green pending
+- **Phase 3 — Static Sites** ⚙️ Largely done — project CRUD, chunked ZIP upload, Nginx deployment, versioned deployments (imageTag), rollback, persistent compose files, role/permission system; blue/green pending
 - **Phase 4 — GitLab Build Pipeline** — Nixpacks, blue/green, real-time WebSocket logs
 - **Phase 5 — Auto CI/CD** — GitLab push webhooks, BullMQ async jobs
 - **Phase 6 — Observability** — container logs/metrics, rollback
