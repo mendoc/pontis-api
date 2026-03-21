@@ -41,7 +41,8 @@ COPY --from=builder /app/node_modules/.bin/prisma ./node_modules/.bin/prisma
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 RUN addgroup -S -g 1001 pontis && adduser -S -u 1001 pontis -G pontis \
-  && chmod +x /usr/local/bin/docker-entrypoint.sh
+  && chmod +x /usr/local/bin/docker-entrypoint.sh \
+  && chown -R pontis:pontis /app/node_modules/.prisma
 
 USER pontis
 
