@@ -87,7 +87,7 @@ model Deployment {
   imageTag   String?
   createdAt  DateTime         @default(now())
   finishedAt DateTime?
-  project    Project          @relation(fields: [projectId], references: [id])
+  project    Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 enum DeploymentStatus {
@@ -102,7 +102,7 @@ model EnvVar {
   projectId      String
   key            String
   valueEncrypted String
-  project        Project @relation(fields: [projectId], references: [id])
+  project        Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
 
 model Port {
@@ -110,5 +110,5 @@ model Port {
   portNumber  Int      @unique
   projectId   String   @unique
   allocatedAt DateTime @default(now())
-  project     Project  @relation(fields: [projectId], references: [id])
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
