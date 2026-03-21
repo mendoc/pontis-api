@@ -139,6 +139,50 @@ Le volume `${PROJECTS_DIR}:${PROJECTS_DIR}` est bind-monté symétrique dans le 
 - User env vars: encrypted AES-256-GCM before storing; injected at container start via `--env-file`; never logged.
 - Every deployed project container runs as non-root.
 
+## Release Workflow
+
+### Au quotidien — développement
+
+```bash
+npm test                          # toujours avant de commiter
+git add <fichiers>
+git commit -m "feat|fix|chore: description"
+git push                          # push sur main ne déclenche PAS GHCR
+```
+
+### Publier une version sur GHCR
+
+```bash
+npm test                          # vérifier que tout passe
+
+# Choisir selon le type de changement :
+npm version patch --no-git-tag-version   # bug fix
+npm version minor --no-git-tag-version   # nouvelle fonctionnalité
+npm version major --no-git-tag-version   # breaking change
+
+git add package.json package-lock.json
+git commit -m "chore: bump version x.y.z"
+git push
+
+git tag vx.y.z
+git push origin vx.y.z            # ← déclenche le workflow GitHub Actions
+```
+
+### En production — après que le workflow GHCR est vert
+
+```bash
+docker compose pull
+docker compose up -d              # l'entrypoint applique prisma migrate deploy
+```
+
+### Règles à respecter
+
+- **`npm test` avant chaque commit** — ne jamais pousser du code cassé
+- **Toujours bumper avant de tagger** — le tag = la version embarquée dans l'image Docker
+- **Ne jamais re-pousser un tag existant** — créer un nouveau tag patch à la place
+- **Les migrations doivent être commitées avant le tag** — sinon elles sont absentes de l'image
+- **`prisma migrate dev` en local, `prisma migrate deploy` en prod** — `dev` crée les migrations, `deploy` les applique
+
 ## Development Roadmap
 
 - **Phase 1 — Infrastructure** ✅
