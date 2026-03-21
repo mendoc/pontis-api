@@ -52,6 +52,7 @@ services:
       GITLAB_CALLBACK_URL: ${GITLAB_CALLBACK_URL}
       APP_DOMAIN: app.ongoua.pro
       DOCKER_NETWORK: pontis_network
+      PROJECTS_DIR: ${PROJECTS_DIR}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECTS_DIR}:${PROJECTS_DIR}
