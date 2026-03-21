@@ -37,7 +37,7 @@ describe('authenticate middleware', () => {
   })
 
   it('valid Bearer token → 200, returns { userId }', async () => {
-    const { accessToken } = app.generateTokens({ sub: 'user-1', email: 'user@example.com' })
+    const { accessToken } = app.generateTokens({ sub: 'user-1', email: 'user@example.com', role: 'developer' as const })
     const response = await app.inject({
       method: 'GET',
       url: '/protected',

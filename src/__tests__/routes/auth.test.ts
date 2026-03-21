@@ -14,6 +14,7 @@ const mockUserBase = {
   email: 'test@example.com',
   gitlabId: null,
   gitlabToken: null,
+  role: 'developer' as const,
   createdAt: new Date(),
 }
 
@@ -198,7 +199,7 @@ describe('POST /auth/refresh', () => {
       }),
     })
 
-    const result = app.generateTokens({ sub: mockUserBase.id, email: mockUserBase.email }, familyId)
+    const result = app.generateTokens({ sub: mockUserBase.id, email: mockUserBase.email, role: mockUserBase.role }, familyId)
     refreshToken = result.refreshToken
     tokenRecord = {
       id: 'rt-1',

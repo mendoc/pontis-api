@@ -18,7 +18,7 @@ describe('jwt plugin', () => {
   })
 
   it('generateTokens returns accessToken and refreshToken strings', () => {
-    const payload: JwtPayload = { sub: 'user-1', email: 'user@example.com' }
+    const payload: JwtPayload = { sub: 'user-1', email: 'user@example.com', role: 'developer' as const }
     const tokens = app.generateTokens(payload)
     assert.equal(typeof tokens.accessToken, 'string')
     assert.equal(typeof tokens.refreshToken, 'string')
@@ -27,7 +27,7 @@ describe('jwt plugin', () => {
   })
 
   it('verifyAccessToken decodes payload correctly (sub, email, iss)', () => {
-    const payload: JwtPayload = { sub: 'user-42', email: 'decode@example.com' }
+    const payload: JwtPayload = { sub: 'user-42', email: 'decode@example.com', role: 'developer' as const }
     const { accessToken } = app.generateTokens(payload)
     const decoded = app.verifyAccessToken(accessToken)
     assert.equal(decoded.sub, payload.sub)
@@ -36,7 +36,7 @@ describe('jwt plugin', () => {
   })
 
   it('verifyAccessToken throws on tampered token', () => {
-    const payload: JwtPayload = { sub: 'user-1', email: 'user@example.com' }
+    const payload: JwtPayload = { sub: 'user-1', email: 'user@example.com', role: 'developer' as const }
     const { accessToken } = app.generateTokens(payload)
     const parts = accessToken.split('.')
     parts[2] = parts[2].split('').reverse().join('')
@@ -45,7 +45,7 @@ describe('jwt plugin', () => {
   })
 
   it('verifyRefreshToken decodes sub correctly', () => {
-    const payload: JwtPayload = { sub: 'user-99', email: 'refresh@example.com' }
+    const payload: JwtPayload = { sub: 'user-99', email: 'refresh@example.com', role: 'developer' as const }
     const { refreshToken } = app.generateTokens(payload)
     const decoded = app.verifyRefreshToken(refreshToken)
     assert.equal(decoded.sub, payload.sub)
@@ -56,7 +56,7 @@ describe('jwt plugin', () => {
   })
 
   it('access token has correct 15min expiry (exp - iat === 900)', () => {
-    const payload: JwtPayload = { sub: 'user-1', email: 'user@example.com' }
+    const payload: JwtPayload = { sub: 'user-1', email: 'user@example.com', role: 'developer' as const }
     const { accessToken } = app.generateTokens(payload)
     const decoded = jwt.decode(accessToken) as { exp: number; iat: number }
     assert.ok(decoded.exp !== undefined)

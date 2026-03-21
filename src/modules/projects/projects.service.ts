@@ -25,6 +25,11 @@ const PROJECT_SELECT = {
   currentDeploymentId: true,
 } as const
 
+const PROJECT_SELECT_WITH_USER = {
+  ...PROJECT_SELECT,
+  user: { select: { id: true, email: true, name: true } },
+} as const
+
 function dockerErrorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return String(err)
@@ -163,10 +168,10 @@ export class ProjectsService {
     return { data, total, page, limit }
   }
 
-  async getProject(userId: string, projectId: string) {
+  async getProject(userId: string | undefined, projectId: string, includeUser = false) {
     const project = await this.prisma.project.findFirst({
-      where: { id: projectId, userId },
-      select: PROJECT_SELECT,
+      where: { id: projectId, ...(userId ? { userId } : {}) },
+      select: includeUser ? PROJECT_SELECT_WITH_USER : PROJECT_SELECT,
     })
 
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
@@ -174,8 +179,8 @@ export class ProjectsService {
     return project
   }
 
-  async startProject(userId: string, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async startProject(userId: string | undefined, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     try {
@@ -197,8 +202,8 @@ export class ProjectsService {
     })
   }
 
-  async stopProject(userId: string, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async stopProject(userId: string | undefined, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     try {
@@ -214,8 +219,8 @@ export class ProjectsService {
     })
   }
 
-  async restartProject(userId: string, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async restartProject(userId: string | undefined, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     const containerName = `pontis-${project.slug}`
@@ -257,8 +262,8 @@ export class ProjectsService {
     })
   }
 
-  async redeployProject(userId: string, projectId: string, zipBuffer: Buffer) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async redeployProject(userId: string | undefined, projectId: string, zipBuffer: Buffer) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     await this.prisma.project.update({ where: { id: projectId }, data: { status: 'building' } })
@@ -296,8 +301,8 @@ export class ProjectsService {
     return { ...updatedProject!, deploymentId: deployment.id }
   }
 
-  async listDeployments(userId: string, projectId: string, opts: { page?: number; limit?: number } = {}) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async listDeployments(userId: string | undefined, projectId: string, opts: { page?: number; limit?: number } = {}) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     const page = Math.max(1, opts.page ?? 1)
@@ -316,8 +321,8 @@ export class ProjectsService {
     return { data, total, page, limit, currentDeploymentId: project.currentDeploymentId ?? null }
   }
 
-  async getDeployment(userId: string, projectId: string, deploymentId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async getDeployment(userId: string | undefined, projectId: string, deploymentId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     const deployment = await this.prisma.deployment.findFirst({
@@ -329,8 +334,8 @@ export class ProjectsService {
     return deployment
   }
 
-  async rollbackDeployment(userId: string, projectId: string, deploymentId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async rollbackDeployment(userId: string | undefined, projectId: string, deploymentId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     const deployment = await this.prisma.deployment.findFirst({
@@ -380,8 +385,8 @@ export class ProjectsService {
     })
   }
 
-  async renameProject(userId: string, projectId: string, name: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async renameProject(userId: string | undefined, projectId: string, name: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     return this.prisma.project.update({
@@ -391,8 +396,8 @@ export class ProjectsService {
     })
   }
 
-  async deleteDeployment(userId: string, projectId: string, deploymentId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async deleteDeployment(userId: string | undefined, projectId: string, deploymentId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     const deployment = await this.prisma.deployment.findFirst({ where: { id: deploymentId, projectId } })
@@ -418,8 +423,8 @@ export class ProjectsService {
     await this.prisma.deployment.delete({ where: { id: deploymentId } })
   }
 
-  async deleteProject(userId: string, projectId: string) {
-    const project = await this.prisma.project.findFirst({ where: { id: projectId, userId } })
+  async deleteProject(userId: string | undefined, projectId: string) {
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, ...(userId ? { userId } : {}) } })
     if (!project) throw new ProjectError('PROJECT_NOT_FOUND', 'Projet introuvable')
 
     // Supprimer le container (force: true gère tous les états)
