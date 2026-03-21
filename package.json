@@ -13,7 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "deploy": "dotenv -e .env -- sh scripts/deploy.sh",
-    "prepare": "git config core.hooksPath .githooks",
+    "prepare": "git config core.hooksPath .githooks || true",
     "release:patch": "npm version patch --no-git-tag-version && VERSION=$(node -p \"require('./package.json').version\") && git add package.json package-lock.json && git commit -m \"chore: bump version $VERSION\" && git tag v$VERSION && git push && git push origin v$VERSION",
     "release:minor": "npm version minor --no-git-tag-version && VERSION=$(node -p \"require('./package.json').version\") && git add package.json package-lock.json && git commit -m \"chore: bump version $VERSION\" && git tag v$VERSION && git push && git push origin v$VERSION",
     "release:major": "npm version major --no-git-tag-version && VERSION=$(node -p \"require('./package.json').version\") && git add package.json package-lock.json && git commit -m \"chore: bump version $VERSION\" && git tag v$VERSION && git push && git push origin v$VERSION"
