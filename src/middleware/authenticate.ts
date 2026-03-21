@@ -21,4 +21,13 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
   } catch {
     return reply.status(401).send({ error: 'Invalid or expired token' })
   }
+
+  const user = await request.server.prisma.user.findUnique({
+    where: { id: request.user.sub },
+    select: { blocked: true },
+  })
+
+  if (!user || user.blocked) {
+    return reply.status(401).send({ error: 'Account blocked' })
+  }
 }

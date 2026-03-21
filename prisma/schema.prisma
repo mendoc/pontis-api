@@ -20,6 +20,7 @@ model User {
   gitlabId            Int?                 @unique
   gitlabToken         String?
   role                UserRole             @default(developer)
+  blocked             Boolean              @default(false)
   createdAt           DateTime             @default(now())
   projects            Project[]
   refreshTokens       RefreshToken[]

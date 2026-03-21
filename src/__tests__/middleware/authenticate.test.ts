@@ -2,6 +2,7 @@ import { describe, it, beforeAll, afterAll } from 'vitest'
 import assert from 'node:assert/strict'
 import jwt from 'jsonwebtoken'
 import { buildTestApp, TEST_PRIVATE_KEY } from '../helpers/build'
+import { makeMockPrisma } from '../helpers/prisma'
 import { authenticate } from '../../middleware/authenticate'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 
@@ -10,6 +11,7 @@ describe('authenticate middleware', () => {
 
   beforeAll(async () => {
     app = await buildTestApp({
+      prisma: makeMockPrisma({ user: { findUnique: async () => ({ blocked: false }) } }),
       onRegister: (instance) => {
         instance.get('/protected', { preHandler: authenticate }, async (request: FastifyRequest) => {
           return { userId: request.user.sub }

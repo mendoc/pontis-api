@@ -55,6 +55,7 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
     const user = await this.prisma.user.findUnique({ where: { email } })
     if (!user) throw new AuthError('INVALID_CREDENTIALS', 'Invalid credentials')
+    if (user.blocked) throw new AuthError('USER_BLOCKED', 'Account blocked')
     if (!user.passwordHash) throw new AuthError('SSO_ACCOUNT_NO_PASSWORD', 'SSO account has no password')
 
     const valid = await bcrypt.compare(password, user.passwordHash)
@@ -93,6 +94,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({ where: { id: payload.sub } })
     if (!user) throw new AuthError('USER_NOT_FOUND', 'User not found')
+    if (user.blocked) throw new AuthError('USER_BLOCKED', 'Account blocked')
 
     const { accessToken } = this.jwt.generateTokens({ sub: user.id, email: user.email, name: user.name ?? undefined, role: user.role }, stored.familyId)
 
