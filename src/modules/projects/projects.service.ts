@@ -1,7 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import Dockerode from 'dockerode'
 import { ProjectError } from './projects.errors'
-import { buildAndRunStaticProject } from '../../lib/static-builder'
+import { buildAndRunStaticProject, NGINX_HEALTHCHECK } from '../../lib/static-builder'
 import { removeProjectDir, writeProjectCompose } from '../../lib/compose-writer'
 
 function slugify(name: string): string {
@@ -66,7 +66,7 @@ export class ProjectsService {
     })
 
     const deployment = await this.prisma.deployment.create({
-      data: { projectId: project.id, status: 'building' },
+      data: { projectId: project.id, deployedById: userId, status: 'building' },
     })
 
     // Fire-and-forget : build en arrière-plan
@@ -251,6 +251,7 @@ export class ProjectsService {
       const container = await this.docker.createContainer({
         Image: imageTag,
         name: containerName,
+        Healthcheck: NGINX_HEALTHCHECK,
         Labels: {
           'traefik.enable': 'true',
           [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
@@ -279,7 +280,7 @@ export class ProjectsService {
     await this.prisma.project.update({ where: { id: projectId }, data: { status: 'building' } })
 
     const deployment = await this.prisma.deployment.create({
-      data: { projectId, status: 'building' },
+      data: { projectId, deployedById: requesterId, status: 'building' },
     })
 
     buildAndRunStaticProject(this.docker, project.id, project.slug, zipBuffer, deployment.id)
@@ -317,12 +318,19 @@ export class ProjectsService {
     const page = Math.max(1, opts.page ?? 1)
     const limit = Math.min(100, Math.max(1, opts.limit ?? 50))
 
+    const DEPLOYMENT_SELECT = {
+      id: true, projectId: true, deployedById: true, commitSha: true,
+      status: true, logs: true, imageTag: true, createdAt: true, finishedAt: true,
+      deployedBy: { select: { id: true, email: true, name: true } },
+    }
+
     const [data, total] = await this.prisma.$transaction([
       this.prisma.deployment.findMany({
         where: { projectId },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
+        select: DEPLOYMENT_SELECT,
       }),
       this.prisma.deployment.count({ where: { projectId } }),
     ])
@@ -335,6 +343,11 @@ export class ProjectsService {
 
     const deployment = await this.prisma.deployment.findFirst({
       where: { id: deploymentId, projectId },
+      select: {
+        id: true, projectId: true, deployedById: true, commitSha: true,
+        status: true, logs: true, imageTag: true, createdAt: true, finishedAt: true,
+        deployedBy: { select: { id: true, email: true, name: true } },
+      },
     })
 
     if (!deployment) throw new ProjectError('DEPLOYMENT_NOT_FOUND', 'Déploiement introuvable')
@@ -369,6 +382,7 @@ export class ProjectsService {
       const container = await this.docker.createContainer({
         Image: deployment.imageTag,
         name: containerName,
+        Healthcheck: NGINX_HEALTHCHECK,
         Labels: {
           'traefik.enable': 'true',
           [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,

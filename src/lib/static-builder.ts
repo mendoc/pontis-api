@@ -11,6 +11,14 @@ import { writeProjectCompose } from './compose-writer'
 const APP_DOMAIN = process.env.APP_DOMAIN ?? 'app.ongoua.pro'
 const DOCKER_NETWORK = process.env.DOCKER_NETWORK ?? 'pontis_network'
 
+export const NGINX_HEALTHCHECK = {
+  Test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:80/ || exit 1'],
+  Interval: 30_000_000_000,
+  Timeout:   5_000_000_000,
+  Retries: 3,
+  StartPeriod: 10_000_000_000,
+}
+
 async function extractZip(zipBuffer: Buffer, destDir: string): Promise<void> {
   try {
     await new Promise<void>((resolve, reject) => {
@@ -136,6 +144,7 @@ export async function buildAndRunStaticProject(
     const container = await docker.createContainer({
       Image: latestTag,
       name: containerName,
+      Healthcheck: NGINX_HEALTHCHECK,
       Labels: {
         'traefik.enable': 'true',
         [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,

@@ -11,6 +11,12 @@ services:
     image: ${imageTag}
     container_name: pontis-${slug}
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:80/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - ${network}
     labels:

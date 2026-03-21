@@ -23,6 +23,7 @@ model User {
   blocked             Boolean              @default(false)
   createdAt           DateTime             @default(now())
   projects            Project[]
+  deployments         Deployment[]         @relation("DeployedByUser")
   refreshTokens       RefreshToken[]
   passwordResetCodes  PasswordResetCode[]
 }
@@ -80,15 +81,17 @@ enum ProjectType {
 }
 
 model Deployment {
-  id         String           @id @default(uuid())
-  projectId  String
-  commitSha  String?
-  status     DeploymentStatus @default(pending)
-  logs       String?
-  imageTag   String?
-  createdAt  DateTime         @default(now())
-  finishedAt DateTime?
-  project    Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  id            String           @id @default(uuid())
+  projectId     String
+  deployedById  String?
+  commitSha     String?
+  status        DeploymentStatus @default(pending)
+  logs          String?
+  imageTag      String?
+  createdAt     DateTime         @default(now())
+  finishedAt    DateTime?
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deployedBy    User?            @relation("DeployedByUser", fields: [deployedById], references: [id])
 }
 
 enum DeploymentStatus {
