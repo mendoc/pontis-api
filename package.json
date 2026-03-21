@@ -12,7 +12,8 @@
     "db:studio": "dotenv -e .env -- prisma studio",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "dotenv -e .env -- sh scripts/deploy.sh"
+    "deploy": "dotenv -e .env -- sh scripts/deploy.sh",
+    "prepare": "git config core.hooksPath .githooks"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
