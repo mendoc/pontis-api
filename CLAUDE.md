@@ -91,6 +91,10 @@ All routes are mounted under the `/api/v1` prefix.
 - **`middleware/requirePermission.ts`** — factory `requirePermission(permission)` → preHandler qui renvoie 403 si le rôle JWT n'a pas la permission; toujours placé après `authenticate`
 - **`config/cookies.ts`** — shared cookie name (`REFRESH_COOKIE`) and options (`cookieOpts`)
 - **`config/permissions.ts`** — type `Permission`, `ROLE_PERMISSIONS` map, `hasPermission(role, permission)`; `developer` a toutes les permissions `projects:*` sauf `projects:debug`; `admin` a toutes les permissions
+- **`modules/users/`** — gestion des utilisateurs (admin only) :
+  - `users.routes.ts` — `GET /users` (liste paginée avec recherche/tri, requiert `users:list`), `PATCH /users/:id/role` (change le rôle, empêche l'auto-modification et garantit au moins un admin, requiert `users:update`), `PATCH /users/:id/block` (bloque/débloque, révoque tous les refresh tokens si blocage, requiert `users:update`)
+- **`modules/admin/`** — vues transversales (admin only) :
+  - `admin.routes.ts` — `GET /admin/projects` (liste paginée de tous les projets toutes origines confondues, recherche sur name/slug/domain/email propriétaire, requiert `users:list`)
 
 ## Testing Patterns
 
@@ -107,7 +111,7 @@ Pattern for route tests: use `app.inject()`, never start a real server. Pattern 
 
 | Table | Key fields |
 |---|---|
-| `users` | id (uuid), email (unique), name?, passwordHash?, gitlabId?, gitlabToken?, role (developer\|admin), createdAt |
+| `users` | id (uuid), email (unique), name?, passwordHash?, gitlabId?, gitlabToken?, role (developer\|admin), blocked (bool), createdAt |
 | `refresh_tokens` | id, userId, familyId, tokenHash (unique), expiresAt, revokedAt? |
 | `password_reset_codes` | id, userId, codeHash, expiresAt, usedAt?, createdAt |
 | `projects` | id, userId, name, slug (unique), type (git\|static), domain?, status, restartedAt?, currentDeploymentId?, createdAt, port? |

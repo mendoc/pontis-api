@@ -11,6 +11,7 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
       search = '',
       sortBy = 'createdAt',
       sortOrder = 'desc',
+      status = '',
     } = request.query as Record<string, string>
 
     const pageNum = Math.max(1, parseInt(page, 10))
@@ -21,17 +22,18 @@ const adminRoutes: FastifyPluginAsync = async (fastify) => {
     const validSortBy = SORTABLE.includes(sortBy) ? sortBy : 'createdAt'
     const validSortOrder = sortOrder === 'asc' ? 'asc' : ('desc' as const)
 
-    const where = search
-      ? {
-          OR: [
-            { name:   { contains: search, mode: 'insensitive' as const } },
-            { slug:   { contains: search, mode: 'insensitive' as const } },
-            { domain: { contains: search, mode: 'insensitive' as const } },
-            { user:   { email: { contains: search, mode: 'insensitive' as const } } },
-            { user:   { name:  { contains: search, mode: 'insensitive' as const } } },
-          ],
-        }
-      : {}
+    const where = {
+      ...(status ? { status } : {}),
+      ...(search ? {
+        OR: [
+          { name:   { contains: search, mode: 'insensitive' as const } },
+          { slug:   { contains: search, mode: 'insensitive' as const } },
+          { domain: { contains: search, mode: 'insensitive' as const } },
+          { user:   { email: { contains: search, mode: 'insensitive' as const } } },
+          { user:   { name:  { contains: search, mode: 'insensitive' as const } } },
+        ],
+      } : {}),
+    }
 
     const [rawData, total] = await fastify.prisma.$transaction([
       fastify.prisma.project.findMany({
