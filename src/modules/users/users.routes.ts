@@ -68,11 +68,18 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
     const { role } = request.body as { role: string }
 
     if (id === request.user.sub) {
-      return reply.status(400).send({ error: 'Cannot change your own role' })
+      return reply.status(400).send({ error: 'Vous ne pouvez pas modifier votre propre rôle' })
     }
 
     if (role !== 'admin' && role !== 'developer') {
-      return reply.status(400).send({ error: 'Invalid role' })
+      return reply.status(400).send({ error: 'Rôle invalide' })
+    }
+
+    if (role === 'developer') {
+      const adminCount = await fastify.prisma.user.count({ where: { role: 'admin' } })
+      if (adminCount <= 1) {
+        return reply.status(400).send({ error: 'La plateforme doit avoir au moins un administrateur' })
+      }
     }
 
     const user = await fastify.prisma.user.update({
@@ -90,7 +97,7 @@ const usersRoutes: FastifyPluginAsync = async (fastify) => {
     const { blocked } = request.body as { blocked: boolean }
 
     if (id === request.user.sub) {
-      return reply.status(400).send({ error: 'Cannot block yourself' })
+      return reply.status(400).send({ error: 'Vous ne pouvez pas vous bloquer vous-même' })
     }
 
     if (blocked) {

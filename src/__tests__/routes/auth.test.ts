@@ -1,4 +1,4 @@
-import { describe, it, beforeAll, afterAll } from 'vitest'
+import { describe, it, beforeAll, afterAll, vi } from 'vitest'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcrypt'
@@ -6,6 +6,10 @@ import { buildTestApp, API_PREFIX } from '../helpers/build'
 import { makeMockPrisma } from '../helpers/prisma'
 import { hashToken } from '../../lib/hash'
 import type { FastifyInstance } from 'fastify'
+
+vi.mock('../../lib/mailer', () => ({
+  sendPasswordResetEmail: vi.fn().mockResolvedValue(undefined),
+}))
 
 const AUTH = `${API_PREFIX}/auth`
 
@@ -346,5 +350,328 @@ describe('GET /auth/gitlab', () => {
   it('without env vars → 503', async () => {
     const response = await app.inject({ method: 'GET', url: `${AUTH}/gitlab` })
     assert.equal(response.statusCode, 503)
+  })
+})
+
+// ------------------------------------------------------------------ forgot-password
+describe('POST /auth/forgot-password', () => {
+  it('invalid email body → 400', async () => {
+    const app = await buildTestApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/forgot-password`,
+      payload: { email: 'not-an-email' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('email not found → 404', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({ user: { findUnique: async () => null } }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/forgot-password`,
+      payload: { email: 'nobody@example.com' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 404)
+  })
+
+  it('SSO account without password → 400', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'sso@example.com',
+            passwordHash: null,
+            gitlabId: 42,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/forgot-password`,
+      payload: { email: 'sso@example.com' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('success → 200 { ok: true }', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'test@example.com',
+            passwordHash: 'hash',
+            gitlabId: null,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/forgot-password`,
+      payload: { email: 'test@example.com' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), { ok: true })
+  })
+})
+
+// ------------------------------------------------------------------ verify-reset-code
+describe('POST /auth/verify-reset-code', () => {
+  it('missing fields → 400', async () => {
+    const app = await buildTestApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/verify-reset-code`,
+      payload: { email: 'test@example.com' }, // missing code
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('code wrong length → 400 (Zod validation)', async () => {
+    const app = await buildTestApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/verify-reset-code`,
+      payload: { email: 'test@example.com', code: '123' }, // code must be 6 chars
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('invalid code → 400', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'test@example.com',
+            passwordHash: 'hash',
+            gitlabId: null,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+        passwordResetCode: { findFirst: async () => null },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/verify-reset-code`,
+      payload: { email: 'test@example.com', code: '000000' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('expired code → 400', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'test@example.com',
+            passwordHash: 'hash',
+            gitlabId: null,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+        passwordResetCode: {
+          findFirst: async () => ({
+            id: 'rc-1',
+            userId: 'user-1',
+            codeHash: hashToken('123456'),
+            expiresAt: new Date(Date.now() - 1000),
+            usedAt: null,
+            createdAt: new Date(),
+          }),
+        },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/verify-reset-code`,
+      payload: { email: 'test@example.com', code: '123456' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('valid code → 200 { ok: true }', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'test@example.com',
+            passwordHash: 'hash',
+            gitlabId: null,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+        passwordResetCode: {
+          findFirst: async () => ({
+            id: 'rc-1',
+            userId: 'user-1',
+            codeHash: hashToken('123456'),
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+            usedAt: null,
+            createdAt: new Date(),
+          }),
+        },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/verify-reset-code`,
+      payload: { email: 'test@example.com', code: '123456' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json(), { ok: true })
+  })
+})
+
+// ------------------------------------------------------------------ reset-password
+describe('POST /auth/reset-password', () => {
+  it('missing fields → 400', async () => {
+    const app = await buildTestApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/reset-password`,
+      payload: { email: 'test@example.com', code: '123456' }, // missing password
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('password too short → 400', async () => {
+    const app = await buildTestApp()
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/reset-password`,
+      payload: { email: 'test@example.com', code: '123456', password: 'short' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('invalid code → 400', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'test@example.com',
+            passwordHash: 'hash',
+            gitlabId: null,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+        passwordResetCode: { findFirst: async () => null },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/reset-password`,
+      payload: { email: 'test@example.com', code: '000000', password: 'newpassword123' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 400)
+  })
+
+  it('success → 200, returns tokens, sets refresh_token cookie', async () => {
+    const app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({
+            id: 'user-1',
+            email: 'test@example.com',
+            passwordHash: 'old-hash',
+            name: null,
+            gitlabId: null,
+            role: 'developer',
+            blocked: false,
+            createdAt: new Date(),
+          }),
+        },
+        passwordResetCode: {
+          findFirst: async () => ({
+            id: 'rc-1',
+            userId: 'user-1',
+            codeHash: hashToken('123456'),
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+            usedAt: null,
+            createdAt: new Date(),
+          }),
+        },
+      }),
+    })
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/reset-password`,
+      payload: { email: 'test@example.com', code: '123456', password: 'newpassword123' },
+    })
+    await app.close()
+    assert.equal(response.statusCode, 200)
+    const body = response.json() as { accessToken: string; userId: string }
+    assert.ok(typeof body.accessToken === 'string' && body.accessToken.length > 0)
+    assert.equal(body.userId, 'user-1')
+    const cookies = response.headers['set-cookie']
+    assert.ok(cookies, 'set-cookie header should be present')
+    const cookieStr = Array.isArray(cookies) ? cookies.join('; ') : cookies
+    assert.ok(cookieStr.includes('refresh_token='))
+  })
+})
+
+// ------------------------------------------------------------------ login - blocked user
+describe('POST /auth/login - blocked user', () => {
+  let app: FastifyInstance
+
+  beforeAll(async () => {
+    const passwordHash = await bcrypt.hash('password123', 1)
+    app = await buildTestApp({
+      prisma: makeMockPrisma({
+        user: {
+          findUnique: async () => ({ id: 'user-1', email: 'blocked@example.com', passwordHash, gitlabId: null, role: 'developer', blocked: true, createdAt: new Date() }),
+        },
+      }),
+    })
+  })
+
+  afterAll(async () => {
+    await app.close()
+  })
+
+  it('blocked account → 401', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: `${AUTH}/login`,
+      payload: { email: 'blocked@example.com', password: 'password123' },
+    })
+    assert.equal(response.statusCode, 401)
   })
 })
