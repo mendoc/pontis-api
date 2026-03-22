@@ -177,11 +177,78 @@ Un webhook écoute les push d'images sur GHCR et redéploie automatiquement — 
 - **Les migrations doivent être commitées avant le tag** — sinon elles sont absentes de l'image
 - **`prisma migrate dev` en local, `prisma migrate deploy` en prod** — `dev` crée les migrations, `deploy` les applique
 
+## Project Types
+
+### Type `static` (implémenté)
+ZIP uploadé → extraction → build image `nginx:alpine` → container avec labels Traefik. Limite 50 Mo.
+
+### Type `docker` (prochain)
+ZIP uploadé → extraction (sans `vendor/`) → `docker build` depuis le `Dockerfile` de l'utilisateur → container avec labels Traefik injectés par Pontis.
+
+**Décisions arrêtées :**
+- Pas de limite de taille fixe (ou beaucoup plus grande) — les sources Laravel sont légères, c'est l'image buildée qui est lourde
+- Le dossier `vendor/` est exclu/ignoré à l'extraction — inutile pour le build (composer install dans le Dockerfile)
+- Port interne par défaut : **8000** (configurable à la création du projet)
+- Health check par défaut : **`/health`** (configurable à la création du projet)
+- Les **labels Traefik sont injectés par Pontis** dans le `docker run`, pas dans le Dockerfile utilisateur
+- Volume nommé persistant monté sur `/var/www/html/storage` (ou chemin configurable) pour `storage/` Laravel
+- Env vars : l'utilisateur les saisit une à une **ou** colle le contenu de son `.env` → converti en formulaire prérempli avec les valeurs modifiables avant validation
+- Port hôte alloué dynamiquement depuis la table `ports` (range 10000–60000), injecté comme variable `PORT` dans le container
+- Même système de versioning d'images que les sites statiques (`:latest` + `:deploy-{deploymentId}`)
+- Même rollback que les sites statiques (recréer le container depuis l'imageTag archivé)
+
+**Champ `internalPort`** à ajouter sur le modèle `projects` (default `8000`).
+**Champ `healthcheckPath`** à ajouter sur le modèle `projects` (default `/health`).
+
+### Type `compose` (phase ultérieure — décisions architecturales)
+
+L'utilisateur fournit un ZIP contenant :
+- `docker-compose.yml` — son fichier standard, inchangé
+- `pontis.yml` — déclaration minimale spécifique à Pontis
+
+```yaml
+# pontis.yml (à la racine du ZIP)
+expose:
+  service: app        # doit correspondre au nom d'un service dans docker-compose.yml
+  port: 8000          # port interne du service exposé
+  healthcheck: /health
+```
+
+**Comportement de Pontis :**
+1. Parse `docker-compose.yml` et vérifie que le service `app` (ou celui déclaré dans `pontis.yml`) existe
+2. Génère un fichier `pontis-override.yml` qui ajoute :
+   - Labels Traefik sur le service exposé uniquement
+   - Connexion au réseau externe `pontis_network` pour le service exposé uniquement
+   - Réseau interne isolé par projet (`pontis-{slug}`) pour tous les services (isolation inter-projets)
+   - Driver de logs Loki sur tous les services avec labels `project={slug}, service={name}`
+3. Lance via `docker compose -f docker-compose.yml -f pontis-override.yml up -d`
+4. Les autres services (db, redis, worker…) restent sur le réseau interne uniquement — non exposés
+
+**Isolation réseau :**
+```
+pontis_network (bridge partagé) — Traefik uniquement
+pontis-{slug} (bridge isolé)    — tous les services du projet
+```
+Deux projets peuvent avoir un service `db` sur le port 5432 sans conflit (réseaux séparés).
+
+**Monitoring (Prometheus) :** géré par Pontis, pas par le développeur.
+- cAdvisor scrappe les métriques Docker de chaque container (CPU, RAM, réseau)
+- Labels Prometheus injectés dans l'override pour le service exposé
+- Si le dev expose un `/metrics`, Pontis configure le scraping automatiquement
+
+**Logs (Loki) :** branchés via l'override, configurés dans la phase compose.
+
+**Ce que Pontis ne fait pas avec le compose :**
+- Ne remplace pas le `docker-compose.yml` de l'utilisateur
+- Ne provisionne pas de base de données — `DATABASE_URL` est une env var comme les autres
+- Ne gère pas le scaling (pas de Swarm/K8s) — l'utilisateur utilise `numprocs` dans supervisord si besoin
+
 ## Development Roadmap
 
 - **Phase 1 — Infrastructure** ✅
 - **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2 + password reset flow
 - **Phase 3 — Static Sites** ⚙️ Largely done — project CRUD, chunked ZIP upload, Nginx deployment, versioned deployments (imageTag), rollback, persistent compose files, role/permission system; blue/green pending
-- **Phase 4 — GitLab Build Pipeline** — Nixpacks, blue/green, real-time WebSocket logs
-- **Phase 5 — Auto CI/CD** — GitLab push webhooks, BullMQ async jobs
-- **Phase 6 — Observability** — container logs/metrics, rollback
+- **Phase 4 — Docker (Dockerfile)** — type `docker`, upload ZIP sans vendor/, build depuis Dockerfile user, env vars via formulaire ou paste .env, port 8000 + healthcheck /health configurables, labels Traefik injectés par Pontis, volume storage persistant, blue/green
+- **Phase 5 — Compose** — type `compose`, pontis.yml + override généré, isolation réseau par projet, Loki logs
+- **Phase 6 — Observability** — Prometheus + cAdvisor, Grafana par projet, métriques container
+- **Phase 7 — CI/CD** — GitLab push webhooks, BullMQ async jobs, pipeline Nixpacks
