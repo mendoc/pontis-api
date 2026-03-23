@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pontis is a self-hosted PaaS (Platform as a Service) — a Netlify/Vercel/Heroku alternative. This repository (`github.com/mendoc/pontis-api`) is the standalone Fastify backend API (Node.js 20), port 3001.
 
-**Current status:** Phase 3 (Static Sites) is largely complete — project CRUD, ZIP upload, Nginx container deployment, versioned deployments, rollback, and persistent compose files are implemented. Role/permission system (`developer`/`admin`) is implemented. Blue/green and GitLab pipeline are next.
+**Current status:** Phase 3 (Static Sites) complete. Phase 4 (Docker/Laravel) implemented — type `docker` projects with Dockerfile-based builds, vendor/ exclusion, env var encryption, persistent storage volume, Traefik labels injected by Pontis. Blue/green pending.
 
 ## Development Commands
 
@@ -62,7 +62,7 @@ npm run db:generate   # regenerate Prisma client after schema changes
 npm run db:studio     # Prisma Studio GUI
 ```
 
-**Environment:** create `.env` from `.env.example`. `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` are auto-generated at startup in dev if absent (warning printed); must be explicit in production.
+**Environment:** create `.env` from `.env.example`. `JWT_PRIVATE_KEY` / `JWT_PUBLIC_KEY` are auto-generated at startup in dev if absent (warning printed); must be explicit in production. `ENCRYPTION_KEY` (32 bytes base64) est requis pour les projets de type `docker` (chiffrement des env vars) — générer avec `openssl rand -base64 32`.
 
 ## API Architecture (`src/`)
 
@@ -248,7 +248,7 @@ Deux projets peuvent avoir un service `db` sur le port 5432 sans conflit (résea
 - **Phase 1 — Infrastructure** ✅
 - **Phase 2 — Authentication** ✅ Prisma schema, JWT + GitLab OAuth2 + password reset flow
 - **Phase 3 — Static Sites** ⚙️ Largely done — project CRUD, chunked ZIP upload, Nginx deployment, versioned deployments (imageTag), rollback, persistent compose files, role/permission system; blue/green pending
-- **Phase 4 — Docker (Dockerfile)** — type `docker`, upload ZIP sans vendor/, build depuis Dockerfile user, env vars via formulaire ou paste .env, port 8000 + healthcheck /health configurables, labels Traefik injectés par Pontis, volume storage persistant, blue/green
+- **Phase 4 — Docker (Dockerfile)** ✅ type `docker`, upload ZIP sans vendor/ (filtre à l'extraction), build depuis Dockerfile user, env vars AES-256-GCM (routes CRUD `/env-vars`), port 8000 + healthcheck `/health` configurables, labels Traefik injectés au `docker run`, volume `pontis-{slug}-storage` persistant; blue/green pending
 - **Phase 5 — Compose** — type `compose`, pontis.yml + override généré, isolation réseau par projet, Loki logs
 - **Phase 6 — Observability** — Prometheus + cAdvisor, Grafana par projet, métriques container
 - **Phase 7 — CI/CD** — GitLab push webhooks, BullMQ async jobs, pipeline Nixpacks
