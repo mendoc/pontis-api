@@ -83,7 +83,17 @@ export class ProjectsService {
     const healthcheckPath = opts.healthcheckPath ?? '/health'
 
     const existing = await this.prisma.project.findUnique({ where: { slug } })
-    if (existing) throw new ProjectError('PROJECT_NAME_TAKEN', 'Ce slug est déjà utilisé')
+    if (existing) {
+      const isRetryable = existing.userId === userId
+        && (existing.status === 'failed' || existing.status === 'building')
+        && existing.currentDeploymentId === null
+      if (isRetryable) {
+        // Premier déploiement en échec ou bloqué — nettoyage pour permettre un nouvel essai
+        await this.prisma.project.delete({ where: { id: existing.id } })
+      } else {
+        throw new ProjectError('PROJECT_NAME_TAKEN', 'Ce slug est déjà utilisé')
+      }
+    }
 
     const project = await this.prisma.project.create({
       data: { userId, name, slug, type, status: 'building', internalPort, healthcheckPath },
