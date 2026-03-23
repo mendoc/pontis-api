@@ -61,7 +61,8 @@ async function buildDockerImage(
   docker: Dockerode,
   siteDir: string,
   primaryTag: string,
-  extraTags: string[]
+  extraTags: string[],
+  logFile?: string
 ): Promise<string> {
   // Écrire le Dockerfile
   const dockerfile = `FROM nginx:alpine\nCOPY . /usr/share/nginx/html\nEXPOSE 80\n`
@@ -93,9 +94,17 @@ async function buildDockerImage(
       (event: { stream?: string; error?: string }) => {
         if (event.stream) {
           const line = event.stream.replace(/\n$/, '')
-          if (line.trim()) logLines.push(`[${timestamp()}] ${line}\n`)
+          if (line.trim()) {
+            const entry = `[${timestamp()}] ${line}\n`
+            logLines.push(entry)
+            if (logFile) fs.appendFile(logFile, entry).catch(() => null)
+          }
         }
-        if (event.error) logLines.push(`[${timestamp()}] ERROR: ${event.error}\n`)
+        if (event.error) {
+          const entry = `[${timestamp()}] ERROR: ${event.error}\n`
+          logLines.push(entry)
+          if (logFile) fs.appendFile(logFile, entry).catch(() => null)
+        }
       }
     )
   })
@@ -114,7 +123,8 @@ export async function buildAndRunStaticProject(
   _projectId: string,
   slug: string,
   zipBuffer: Buffer,
-  deploymentId: string
+  deploymentId: string,
+  logFile?: string
 ): Promise<{ domain: string; logs: string }> {
   const tmpBase = path.join(os.tmpdir(), randomUUID())
   const extractDir = path.join(tmpBase, 'extract')
@@ -129,7 +139,7 @@ export async function buildAndRunStaticProject(
     const latestTag = `pontis-${slug}:latest`
     const versionedTag = `pontis-${slug}:deploy-${deploymentId}`
 
-    const logs = await buildDockerImage(docker, siteDir, latestTag, [versionedTag])
+    const logs = await buildDockerImage(docker, siteDir, latestTag, [versionedTag], logFile)
 
     const containerName = `pontis-${slug}`
     const domain = `${slug}.${APP_DOMAIN}`

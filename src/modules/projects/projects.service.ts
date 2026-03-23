@@ -1,8 +1,19 @@
 import { PrismaClient } from '@prisma/client'
 import Dockerode from 'dockerode'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { ProjectError } from './projects.errors'
 import { buildAndRunStaticProject, NGINX_HEALTHCHECK } from '../../lib/static-builder'
+import { buildAndRunDockerProject, recreateDockerContainer } from '../../lib/docker-builder'
 import { removeProjectDir, writeProjectCompose } from '../../lib/compose-writer'
+import { encrypt, decrypt } from '../../lib/crypto'
+
+const LOG_DIR = path.join(os.tmpdir(), 'pontis-logs')
+
+function deploymentLogFile(deploymentId: string): string {
+  return path.join(LOG_DIR, `${deploymentId}.log`)
+}
 
 function slugify(name: string): string {
   return name
@@ -55,22 +66,64 @@ export class ProjectsService {
     return { available: !existing }
   }
 
-  async createProject(userId: string, name: string, zipBuffer: Buffer) {
+  async createProject(
+    userId: string,
+    name: string,
+    zipBuffer: Buffer,
+    opts: {
+      type?: 'static' | 'docker'
+      internalPort?: number
+      healthcheckPath?: string
+      envVars?: Array<{ key: string; value: string }>
+    } = {}
+  ) {
     const slug = slugify(name)
+    const type = opts.type ?? 'static'
+    const internalPort = opts.internalPort ?? 8000
+    const healthcheckPath = opts.healthcheckPath ?? '/health'
 
     const existing = await this.prisma.project.findUnique({ where: { slug } })
     if (existing) throw new ProjectError('PROJECT_NAME_TAKEN', 'Ce slug est déjà utilisé')
 
     const project = await this.prisma.project.create({
-      data: { userId, name, slug, type: 'static', status: 'building' },
+      data: { userId, name, slug, type, status: 'building', internalPort, healthcheckPath },
     })
+
+    // Sauvegarder les env vars chiffrées (type docker uniquement)
+    if (type === 'docker' && opts.envVars?.length) {
+      await this.prisma.envVar.createMany({
+        data: opts.envVars.map(({ key, value }) => ({
+          projectId: project.id,
+          key,
+          valueEncrypted: encrypt(value),
+        })),
+      })
+    }
 
     const deployment = await this.prisma.deployment.create({
       data: { projectId: project.id, deployedById: userId, status: 'building' },
     })
 
+    const logFile = deploymentLogFile(deployment.id)
+    await fs.mkdir(LOG_DIR, { recursive: true })
+
+    const buildPromise = type === 'docker'
+      ? this.prisma.envVar.findMany({ where: { projectId: project.id } }).then((envVars) =>
+          buildAndRunDockerProject({
+            docker: this.docker,
+            slug,
+            zipBuffer,
+            deploymentId: deployment.id,
+            internalPort,
+            healthcheckPath,
+            envVars,
+            logFile,
+          })
+        )
+      : buildAndRunStaticProject(this.docker, project.id, slug, zipBuffer, deployment.id, logFile)
+
     // Fire-and-forget : build en arrière-plan
-    buildAndRunStaticProject(this.docker, project.id, slug, zipBuffer, deployment.id)
+    buildPromise
       .then(async ({ domain, logs }) => {
         const imageTag = `pontis-${slug}:deploy-${deployment.id}`
         await this.prisma.deployment.update({
@@ -81,6 +134,7 @@ export class ProjectsService {
           where: { id: project.id },
           data: { status: 'running', domain, currentDeploymentId: deployment.id },
         })
+        fs.unlink(logFile).catch(() => null)
       })
       .catch(async (err) => {
         const errorMsg = dockerErrorMessage(err)
@@ -93,6 +147,7 @@ export class ProjectsService {
           where: { id: project.id },
           data: { status: 'failed' },
         })
+        fs.unlink(logFile).catch(() => null)
       })
 
     return { ...project, deploymentId: deployment.id }
@@ -124,7 +179,7 @@ export class ProjectsService {
       ? ProjectsService.STATUS_FR.find(([label]) => label.includes(normalizedSearch))?.[1]
       : undefined
 
-    const PROJECT_TYPES = ['git', 'static'] as const
+    const PROJECT_TYPES = ['git', 'static', 'docker'] as const
     type ProjectTypeVal = typeof PROJECT_TYPES[number]
     const matchedType = search
       ? PROJECT_TYPES.find((t) => t.includes(search.toLowerCase())) as ProjectTypeVal | undefined
@@ -234,37 +289,55 @@ export class ProjectsService {
   async restartProject(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
     const project = await this.assertAccess(projectId, requesterId, requesterRole)
 
-    const containerName = `pontis-${project.slug}`
-    const imageTag = `pontis-${project.slug}:latest`
     const domain = project.domain ?? `${project.slug}.${process.env.APP_DOMAIN ?? 'app.ongoua.pro'}`
-    const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
-    const slug = project.slug
+    const imageTag = `pontis-${project.slug}:latest`
 
-    // Supprimer le container existant (force: true gère tous les états)
-    try {
-      await this.docker.getContainer(containerName).remove({ force: true })
-    } catch {
-      // Container inexistant — pas un problème
-    }
+    if (project.type === 'docker') {
+      const envVars = await this.prisma.envVar.findMany({ where: { projectId } })
+      try {
+        await recreateDockerContainer({
+          docker: this.docker,
+          slug: project.slug,
+          domain,
+          imageTag,
+          internalPort: project.internalPort,
+          healthcheckPath: project.healthcheckPath,
+          envVars,
+        })
+      } catch (err) {
+        throw new ProjectError('BUILD_FAILED', `Impossible de recréer le container : ${dockerErrorMessage(err)}`)
+      }
+    } else {
+      // Static / git : nginx container
+      const containerName = `pontis-${project.slug}`
+      const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
+      const slug = project.slug
 
-    try {
-      const container = await this.docker.createContainer({
-        Image: imageTag,
-        name: containerName,
-        Healthcheck: NGINX_HEALTHCHECK,
-        Labels: {
-          'traefik.enable': 'true',
-          [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
-          [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
-          [`traefik.http.routers.${slug}.tls`]: 'true',
-          [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
-          [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
-        },
-        HostConfig: { NetworkMode: network },
-      })
-      await container.start()
-    } catch (err) {
-      throw new ProjectError('BUILD_FAILED', `Impossible de recréer le container : ${dockerErrorMessage(err)}`)
+      try {
+        await this.docker.getContainer(containerName).remove({ force: true })
+      } catch {
+        // Container inexistant — pas un problème
+      }
+
+      try {
+        const container = await this.docker.createContainer({
+          Image: imageTag,
+          name: containerName,
+          Healthcheck: NGINX_HEALTHCHECK,
+          Labels: {
+            'traefik.enable': 'true',
+            [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
+            [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
+            [`traefik.http.routers.${slug}.tls`]: 'true',
+            [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
+            [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
+          },
+          HostConfig: { NetworkMode: network },
+        })
+        await container.start()
+      } catch (err) {
+        throw new ProjectError('BUILD_FAILED', `Impossible de recréer le container : ${dockerErrorMessage(err)}`)
+      }
     }
 
     return this.prisma.project.update({
@@ -283,7 +356,25 @@ export class ProjectsService {
       data: { projectId, deployedById: requesterId, status: 'building' },
     })
 
-    buildAndRunStaticProject(this.docker, project.id, project.slug, zipBuffer, deployment.id)
+    const logFile = deploymentLogFile(deployment.id)
+    await fs.mkdir(LOG_DIR, { recursive: true })
+
+    const buildPromise = project.type === 'docker'
+      ? this.prisma.envVar.findMany({ where: { projectId } }).then((envVars) =>
+          buildAndRunDockerProject({
+            docker: this.docker,
+            slug: project.slug,
+            zipBuffer,
+            deploymentId: deployment.id,
+            internalPort: project.internalPort,
+            healthcheckPath: project.healthcheckPath,
+            envVars,
+            logFile,
+          })
+        )
+      : buildAndRunStaticProject(this.docker, project.id, project.slug, zipBuffer, deployment.id, logFile)
+
+    buildPromise
       .then(async ({ domain, logs }) => {
         const imageTag = `pontis-${project.slug}:deploy-${deployment.id}`
         await this.prisma.deployment.update({
@@ -291,6 +382,7 @@ export class ProjectsService {
           data: { status: 'success', logs, imageTag, finishedAt: new Date() },
         })
         await this.prisma.project.update({ where: { id: projectId }, data: { status: 'running', domain, currentDeploymentId: deployment.id } })
+        fs.unlink(logFile).catch(() => null)
       })
       .catch(async (err) => {
         const errorMsg = dockerErrorMessage(err)
@@ -299,9 +391,9 @@ export class ProjectsService {
           where: { id: deployment.id },
           data: { status: 'failed', logs: errorMsg, finishedAt: new Date() },
         })
-        // Si un déploiement était déjà en production, son container est toujours actif — on y revient.
         const revertStatus = project.currentDeploymentId ? 'running' : 'failed'
         await this.prisma.project.update({ where: { id: projectId }, data: { status: revertStatus } })
+        fs.unlink(logFile).catch(() => null)
       })
 
     const updatedProject = await this.prisma.project.findFirst({
@@ -352,6 +444,11 @@ export class ProjectsService {
 
     if (!deployment) throw new ProjectError('DEPLOYMENT_NOT_FOUND', 'Déploiement introuvable')
 
+    if (deployment.status === 'building' || deployment.status === 'pending') {
+      const liveLogs = await fs.readFile(deploymentLogFile(deploymentId), 'utf-8').catch(() => null)
+      if (liveLogs !== null) return { ...deployment, logs: liveLogs }
+    }
+
     return deployment
   }
 
@@ -366,37 +463,54 @@ export class ProjectsService {
       throw new ProjectError('DEPLOYMENT_NOT_FOUND', 'Déploiement introuvable ou sans image versionnée')
     }
 
-    const containerName = `pontis-${project.slug}`
     const domain = project.domain ?? `${project.slug}.${process.env.APP_DOMAIN ?? 'app.ongoua.pro'}`
-    const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
-    const slug = project.slug
 
-    // Supprimer le container existant (force: true gère tous les états)
-    try {
-      await this.docker.getContainer(containerName).remove({ force: true })
-    } catch {
-      // Container inexistant — pas un problème
-    }
+    if (project.type === 'docker') {
+      const envVars = await this.prisma.envVar.findMany({ where: { projectId } })
+      try {
+        await recreateDockerContainer({
+          docker: this.docker,
+          slug: project.slug,
+          domain,
+          imageTag: deployment.imageTag,
+          internalPort: project.internalPort,
+          healthcheckPath: project.healthcheckPath,
+          envVars,
+        })
+      } catch (err) {
+        throw new ProjectError('BUILD_FAILED', `Impossible de restaurer le container : ${dockerErrorMessage(err)}`)
+      }
+    } else {
+      const containerName = `pontis-${project.slug}`
+      const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
+      const slug = project.slug
 
-    try {
-      const container = await this.docker.createContainer({
-        Image: deployment.imageTag,
-        name: containerName,
-        Healthcheck: NGINX_HEALTHCHECK,
-        Labels: {
-          'traefik.enable': 'true',
-          [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
-          [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
-          [`traefik.http.routers.${slug}.tls`]: 'true',
-          [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
-          [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
-        },
-        HostConfig: { NetworkMode: network },
-      })
-      await container.start()
-      await writeProjectCompose(slug, domain, network, deployment.imageTag).catch(() => null)
-    } catch (err) {
-      throw new ProjectError('BUILD_FAILED', `Impossible de restaurer le container : ${dockerErrorMessage(err)}`)
+      try {
+        await this.docker.getContainer(containerName).remove({ force: true })
+      } catch {
+        // Container inexistant — pas un problème
+      }
+
+      try {
+        const container = await this.docker.createContainer({
+          Image: deployment.imageTag,
+          name: containerName,
+          Healthcheck: NGINX_HEALTHCHECK,
+          Labels: {
+            'traefik.enable': 'true',
+            [`traefik.http.routers.${slug}.rule`]: `Host(\`${domain}\`)`,
+            [`traefik.http.routers.${slug}.entrypoints`]: 'websecure',
+            [`traefik.http.routers.${slug}.tls`]: 'true',
+            [`traefik.http.routers.${slug}.tls.certresolver`]: 'letsencrypt',
+            [`traefik.http.services.${slug}.loadbalancer.server.port`]: '80',
+          },
+          HostConfig: { NetworkMode: network },
+        })
+        await container.start()
+        await writeProjectCompose(slug, domain, network, deployment.imageTag).catch(() => null)
+      } catch (err) {
+        throw new ProjectError('BUILD_FAILED', `Impossible de restaurer le container : ${dockerErrorMessage(err)}`)
+      }
     }
 
     return this.prisma.project.update({
@@ -462,8 +576,42 @@ export class ProjectsService {
       // Pas d'images — pas un problème
     }
 
+    // Supprimer le volume de stockage persistant pour les projets docker
+    if (project.type === 'docker') {
+      try {
+        await this.docker.getVolume(`pontis-${project.slug}-storage`).remove()
+      } catch {
+        // Volume inexistant — pas un problème
+      }
+    }
+
     await removeProjectDir(project.slug).catch(() => null)
     await this.prisma.project.delete({ where: { id: projectId } })
+  }
+
+  // --- Gestion des variables d'environnement ---
+
+  async listEnvVars(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string) {
+    await this.assertAccess(projectId, requesterId, requesterRole)
+    const envVars = await this.prisma.envVar.findMany({ where: { projectId }, select: { id: true, key: true } })
+    return envVars
+  }
+
+  async upsertEnvVar(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, key: string, value: string) {
+    await this.assertAccess(projectId, requesterId, requesterRole)
+    const valueEncrypted = encrypt(value)
+    const existing = await this.prisma.envVar.findFirst({ where: { projectId, key } })
+    if (existing) {
+      return this.prisma.envVar.update({ where: { id: existing.id }, data: { valueEncrypted }, select: { id: true, key: true } })
+    }
+    return this.prisma.envVar.create({ data: { projectId, key, valueEncrypted }, select: { id: true, key: true } })
+  }
+
+  async deleteEnvVar(requesterId: string, requesterRole: 'developer' | 'admin', projectId: string, key: string) {
+    await this.assertAccess(projectId, requesterId, requesterRole)
+    const existing = await this.prisma.envVar.findFirst({ where: { projectId, key } })
+    if (!existing) throw new ProjectError('PROJECT_NOT_FOUND', 'Variable d\'environnement introuvable')
+    await this.prisma.envVar.delete({ where: { id: existing.id } })
   }
 
   // --- Méthodes de debug step-by-step ---
@@ -493,6 +641,21 @@ export class ProjectsService {
     const slug = project.slug
     const domain = project.domain ?? `${slug}.${process.env.APP_DOMAIN ?? 'app.ongoua.pro'}`
     const network = process.env.DOCKER_NETWORK ?? 'pontis_network'
+
+    if (project.type === 'docker') {
+      const envVars = await this.prisma.envVar.findMany({ where: { projectId } })
+      await recreateDockerContainer({
+        docker: this.docker,
+        slug,
+        domain,
+        imageTag,
+        internalPort: project.internalPort,
+        healthcheckPath: project.healthcheckPath,
+        envVars,
+      })
+      return { step: 'create', containerName, newId: '(docker-recreated)' }
+    }
+
     const container = await this.docker.createContainer({
       Image: imageTag,
       name: containerName,
