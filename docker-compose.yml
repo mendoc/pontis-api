@@ -54,6 +54,7 @@ services:
       DOCKER_NETWORK: pontis_network
       PROJECTS_DIR: ${PROJECTS_DIR}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${PROJECTS_DIR}:${PROJECTS_DIR}
