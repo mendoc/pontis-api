@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { authenticate } from '../../middleware/authenticate'
 import { requirePermission } from '../../middleware/requirePermission'
-import { CreateProjectBody } from './projects.schemas'
+import { CreateProjectBody, UpsertEnvVarBody } from './projects.schemas'
 import { ProjectError, ProjectErrorCode } from './projects.errors'
 import { ProjectsService } from './projects.service'
 
@@ -23,7 +23,7 @@ const HTTP_STATUS: Record<ProjectErrorCode, number> = {
 }
 
 const projectsRoutes: FastifyPluginAsync = async (fastify) => {
-  await fastify.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } })
+  await fastify.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 * 1024 } }) // 2 GB
 
   const svc = new ProjectsService(fastify.prisma, fastify.docker)
 
@@ -65,11 +65,16 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
 
   // POST /upload/finalize — assembler les chunks et créer le projet
   fastify.post('/upload/finalize', { preHandler: [authenticate, requirePermission('projects:create')] }, async (request, reply) => {
-    const { name, uploadId, totalChunks } = request.body as {
+    const body = request.body as {
       name: string
       uploadId: string
       totalChunks: number
+      type?: string
+      internalPort?: number
+      healthcheckPath?: string
+      envVars?: Array<{ key: string; value: string }>
     }
+    const { name, uploadId, totalChunks } = body
 
     if (!name || !uploadId || !totalChunks) {
       return reply.status(400).send({ error: 'name, uploadId et totalChunks requis' })
@@ -93,17 +98,28 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(400).send({ error: 'Fichier ZIP requis' })
     }
 
-    const parsed = CreateProjectBody.safeParse({ name })
+    const parsed = CreateProjectBody.safeParse({
+      name,
+      type: body.type,
+      internalPort: body.internalPort,
+      healthcheckPath: body.healthcheckPath,
+    })
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.flatten() })
     }
 
     try {
-      const project = await svc.createProject(request.user.sub, parsed.data.name, zipBuffer)
+      const project = await svc.createProject(request.user.sub, parsed.data.name, zipBuffer, {
+        type: parsed.data.type,
+        internalPort: parsed.data.internalPort,
+        healthcheckPath: parsed.data.healthcheckPath,
+        envVars: body.envVars,
+      })
       return reply.status(201).send({
         id: project.id,
         name: project.name,
         slug: project.slug,
+        type: project.type,
         status: project.status,
         domain: project.domain ?? null,
         deploymentId: project.deploymentId,
@@ -162,17 +178,25 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     return reply.send(result)
   })
 
-  // POST / — créer un projet statique
+  // POST / — créer un projet (multipart direct)
   fastify.post('/', { preHandler: [authenticate, requirePermission('projects:create')] }, async (request, reply) => {
     const parts = request.parts()
     let name: string | undefined
+    let type: string | undefined
+    let internalPort: number | undefined
+    let healthcheckPath: string | undefined
+    let envVarsRaw: string | undefined
     let zipBuffer: Buffer | undefined
 
     const tmpPath = join(tmpdir(), `${randomUUID()}.zip`)
     try {
       for await (const part of parts) {
-        if (part.type === 'field' && part.fieldname === 'name') {
-          name = part.value as string
+        if (part.type === 'field') {
+          if (part.fieldname === 'name') name = part.value as string
+          else if (part.fieldname === 'type') type = part.value as string
+          else if (part.fieldname === 'internalPort') internalPort = Number(part.value)
+          else if (part.fieldname === 'healthcheckPath') healthcheckPath = part.value as string
+          else if (part.fieldname === 'envVars') envVarsRaw = part.value as string
         } else if (part.type === 'file' && part.fieldname === 'file') {
           await pipeline(part.file, createWriteStream(tmpPath))
         }
@@ -182,7 +206,7 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
       await unlink(tmpPath).catch(() => null)
     }
 
-    const parsed = CreateProjectBody.safeParse({ name })
+    const parsed = CreateProjectBody.safeParse({ name, type, internalPort, healthcheckPath })
     if (!parsed.success) {
       return reply.status(400).send({ error: parsed.error.flatten() })
     }
@@ -191,12 +215,23 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(400).send({ error: 'Fichier ZIP requis' })
     }
 
+    let envVars: Array<{ key: string; value: string }> | undefined
+    if (envVarsRaw) {
+      try { envVars = JSON.parse(envVarsRaw) } catch { /* ignored */ }
+    }
+
     try {
-      const project = await svc.createProject(request.user.sub, parsed.data.name, zipBuffer)
+      const project = await svc.createProject(request.user.sub, parsed.data.name, zipBuffer, {
+        type: parsed.data.type,
+        internalPort: parsed.data.internalPort,
+        healthcheckPath: parsed.data.healthcheckPath,
+        envVars,
+      })
       return reply.status(201).send({
         id: project.id,
         name: project.name,
         slug: project.slug,
+        type: project.type,
         status: project.status,
         domain: project.domain ?? null,
         deploymentId: project.deploymentId,
@@ -357,6 +392,46 @@ const projectsRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       const project = await svc.renameProject(request.user.sub, request.user.role, id, name.trim())
       return reply.send(project)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // GET /:id/env-vars — liste les clés des env vars (sans les valeurs)
+  fastify.get('/:id/env-vars', { preHandler: [authenticate, requirePermission('projects:read')] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    try {
+      const envVars = await svc.listEnvVars(request.user.sub, request.user.role, id)
+      return reply.send(envVars)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // POST /:id/env-vars — créer ou mettre à jour une env var
+  fastify.post('/:id/env-vars', { preHandler: [authenticate, requirePermission('projects:update')] }, async (request, reply) => {
+    const { id } = request.params as { id: string }
+    const parsed = UpsertEnvVarBody.safeParse(request.body)
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.flatten() })
+    }
+    try {
+      const envVar = await svc.upsertEnvVar(request.user.sub, request.user.role, id, parsed.data.key, parsed.data.value)
+      return reply.status(201).send(envVar)
+    } catch (err) {
+      if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
+      throw err
+    }
+  })
+
+  // DELETE /:id/env-vars/:key — supprimer une env var
+  fastify.delete('/:id/env-vars/:key', { preHandler: [authenticate, requirePermission('projects:update')] }, async (request, reply) => {
+    const { id, key } = request.params as { id: string; key: string }
+    try {
+      await svc.deleteEnvVar(request.user.sub, request.user.role, id, key)
+      return reply.status(204).send()
     } catch (err) {
       if (err instanceof ProjectError) return reply.status(HTTP_STATUS[err.code]).send({ error: err.message })
       throw err

@@ -27,6 +27,29 @@ export interface MockPasswordResetCodeMethods {
 export interface MockProjectMethods {
   findMany?: AnyFn
   count?: AnyFn
+  create?: AnyFn
+  update?: AnyFn
+  findUnique?: AnyFn
+  findFirst?: AnyFn
+  delete?: AnyFn
+}
+
+export interface MockEnvVarMethods {
+  findMany?: AnyFn
+  findFirst?: AnyFn
+  create?: AnyFn
+  createMany?: AnyFn
+  update?: AnyFn
+  delete?: AnyFn
+}
+
+export interface MockDeploymentMethods {
+  create?: AnyFn
+  update?: AnyFn
+  findFirst?: AnyFn
+  findMany?: AnyFn
+  count?: AnyFn
+  delete?: AnyFn
 }
 
 export interface MockPrismaMethods {
@@ -34,11 +57,21 @@ export interface MockPrismaMethods {
   refreshToken?: MockRefreshTokenMethods
   passwordResetCode?: MockPasswordResetCodeMethods
   project?: MockProjectMethods
+  envVar?: MockEnvVarMethods
+  deployment?: MockDeploymentMethods
   transaction?: (ops: any[]) => Promise<any[]>
 }
 
 export function makeMockPrisma(methods: MockPrismaMethods = {}): PrismaClient {
-  const { user = {}, refreshToken = {}, passwordResetCode = {}, project = {}, transaction } = methods
+  const {
+    user = {},
+    refreshToken = {},
+    passwordResetCode = {},
+    project = {},
+    envVar = {},
+    deployment = {},
+    transaction,
+  } = methods
 
   return {
     user: {
@@ -63,6 +96,27 @@ export function makeMockPrisma(methods: MockPrismaMethods = {}): PrismaClient {
     project: {
       findMany: project.findMany ?? (async () => []),
       count: project.count ?? (async () => 0),
+      create: project.create ?? (async (args: any) => ({ id: 'proj-uuid', slug: 'test-proj', domain: null, status: 'building', type: 'static', internalPort: 8000, healthcheckPath: '/health', ...args.data })),
+      update: project.update ?? (async (args: any) => ({ id: args.where?.id ?? 'proj-uuid', ...args.data })),
+      findUnique: project.findUnique ?? (async () => null),
+      findFirst: project.findFirst ?? (async () => null),
+      delete: project.delete ?? (async () => ({})),
+    },
+    envVar: {
+      findMany: envVar.findMany ?? (async () => []),
+      findFirst: envVar.findFirst ?? (async () => null),
+      create: envVar.create ?? (async (args: any) => ({ id: 'ev-uuid', ...args.data })),
+      createMany: envVar.createMany ?? (async () => ({ count: 0 })),
+      update: envVar.update ?? (async (args: any) => ({ id: args.where?.id ?? 'ev-uuid', ...args.data })),
+      delete: envVar.delete ?? (async () => ({})),
+    },
+    deployment: {
+      create: deployment.create ?? (async (args: any) => ({ id: 'dep-uuid', status: 'building', ...args.data })),
+      update: deployment.update ?? (async (args: any) => ({ id: args.where?.id ?? 'dep-uuid', ...args.data })),
+      findFirst: deployment.findFirst ?? (async () => null),
+      findMany: deployment.findMany ?? (async () => []),
+      count: deployment.count ?? (async () => 0),
+      delete: deployment.delete ?? (async () => ({})),
     },
     $transaction: transaction
       ? transaction
